@@ -33,7 +33,7 @@ class OverlayWindow:
         self.update_macro_list()
         
         # Set up recording hotkey callback
-        self.input_manager.set_stop_recording_callback(self.hotkey_stop_recording)
+        self.input_manager.set_toggle_recording_callback(self.toggle_recording)
         
         # Set up loop stop hotkey callback
         self.input_manager.set_stop_loop_callback(self.hotkey_stop_loop)
@@ -122,7 +122,7 @@ class OverlayWindow:
         hotkey_frame = tk.Frame(main_frame, bg=BG_COLOR)
         hotkey_frame.pack(fill=tk.X, pady=(0, 5))
         
-        tk.Label(hotkey_frame, text=f"Hotkeys: {STOP_RECORDING_KEY} = Stop Recording | {STOP_LOOP_KEY} = Stop Loop", 
+        tk.Label(hotkey_frame, text=f"Hotkeys: {TOGGLE_RECORDING_KEY} = Toggle Recording | {STOP_LOOP_KEY} = Stop Loop", 
                 bg=BG_COLOR, fg=ACCENT_COLOR, font=('Arial', 8, 'italic')).pack(anchor=tk.W)
         
         # Macro list frame
@@ -588,19 +588,7 @@ class OverlayWindow:
             self.stop_loop_btn.configure(state=tk.DISABLED)
             self.status_var.set("Loop stopped by user")
     
-    def hotkey_stop_recording(self):
-        """Stop recording via hotkey"""
-        if self.input_manager.is_recording:
-            self.current_recording = self.input_manager.stop_recording()
-            self.recording_var.set("● Record")
-            self.record_btn.configure(style="Normal.TButton")
-            self.stop_btn.configure(state=tk.DISABLED)
-            
-            if self.current_recording:
-                self.save_btn.configure(state=tk.NORMAL)
-                self.status_var.set(f"Recording stopped via hotkey - {len(self.current_recording)} events")
-            else:
-                self.status_var.set("Recording stopped - no events recorded")
+
     
     def hotkey_stop_loop(self):
         """Stop loop via hotkey"""
@@ -806,16 +794,16 @@ class SettingsDialog:
         tk.Label(hotkeys_frame, text="Hotkey Configuration", 
                 bg=BG_COLOR, fg=TEXT_COLOR, font=('Arial', 10, 'bold')).pack(pady=10)
         
-        # Stop Recording Hotkey
-        stop_rec_frame = tk.Frame(hotkeys_frame, bg=BG_COLOR)
-        stop_rec_frame.pack(fill=tk.X, padx=20, pady=5)
+        # Toggle Recording Hotkey
+        toggle_rec_frame = tk.Frame(hotkeys_frame, bg=BG_COLOR)
+        toggle_rec_frame.pack(fill=tk.X, padx=20, pady=5)
         
-        tk.Label(stop_rec_frame, text="Stop Recording:", bg=BG_COLOR, fg=TEXT_COLOR, 
+        tk.Label(toggle_rec_frame, text="Toggle Recording:", bg=BG_COLOR, fg=TEXT_COLOR, 
                 width=15, anchor=tk.W).pack(side=tk.LEFT)
         
-        self.stop_recording_var = tk.StringVar(value=STOP_RECORDING_KEY)
-        stop_rec_entry = tk.Entry(stop_rec_frame, textvariable=self.stop_recording_var, width=10)
-        stop_rec_entry.pack(side=tk.LEFT, padx=(5, 0))
+        self.toggle_recording_var = tk.StringVar(value=TOGGLE_RECORDING_KEY)
+        toggle_rec_entry = tk.Entry(toggle_rec_frame, textvariable=self.toggle_recording_var, width=10)
+        toggle_rec_entry.pack(side=tk.LEFT, padx=(5, 0))
         
         # Stop Loop Hotkey
         stop_loop_frame = tk.Frame(hotkeys_frame, bg=BG_COLOR)
@@ -847,18 +835,18 @@ class SettingsDialog:
         """Save hotkey settings"""
         try:
             # Update config values (would need to save to file in a real implementation)
-            global STOP_RECORDING_KEY, STOP_LOOP_KEY
-            STOP_RECORDING_KEY = self.stop_recording_var.get()
+            global TOGGLE_RECORDING_KEY, STOP_LOOP_KEY
+            TOGGLE_RECORDING_KEY = self.toggle_recording_var.get()
             STOP_LOOP_KEY = self.stop_loop_var.get()
             
             messagebox.showinfo("Settings Saved", 
                               "Hotkey settings saved!\nRestart the overlay for changes to take effect.")
-            self.result = (STOP_RECORDING_KEY, STOP_LOOP_KEY)
+            self.result = (TOGGLE_RECORDING_KEY, STOP_LOOP_KEY)
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save settings: {e}")
     
     def reset_defaults(self):
         """Reset hotkeys to default values"""
-        self.stop_recording_var.set("`")
+        self.toggle_recording_var.set("`")
         self.stop_loop_var.set("F12") 

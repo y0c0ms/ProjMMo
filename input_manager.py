@@ -32,7 +32,7 @@ class InputManager:
         self.last_mouse_pos = (0, 0)
         
         # Recording control callbacks
-        self.stop_recording_callback = None
+        self.toggle_recording_callback = None
         self.stop_loop_callback = None
         
         # Start global hotkey listener
@@ -467,6 +467,7 @@ class InputManager:
     def _center_mouse_in_game(self):
         """Move mouse to center of game window"""
         if not self.window_manager.game_rect:
+            print("Cannot center mouse - no game window rect available")
             return
         
         try:
@@ -475,9 +476,17 @@ class InputManager:
             center_x = (x1 + x2) // 2
             center_y = (y1 + y2) // 2
             
+            print(f"Centering mouse to ({center_x}, {center_y}) in game window ({x1}, {y1}) to ({x2}, {y2})")
+            
             # Move mouse to center
             win32api.SetCursorPos((center_x, center_y))
-            time.sleep(0.1)  # Small delay to ensure position is set
+            time.sleep(0.2)  # Small delay to ensure position is set
+            
+            # Verify the position was set
+            import win32gui
+            current_pos = win32gui.GetCursorPos()
+            print(f"Mouse position after centering: {current_pos}")
+            
         except Exception as e:
             print(f"Error centering mouse: {e}")
     
@@ -486,28 +495,32 @@ class InputManager:
         try:
             def on_hotkey_press(key):
                 try:
-                    # Check for stop recording hotkey
-                    if hasattr(key, 'char') and key.char == STOP_RECORDING_KEY:
-                        if self.is_recording and self.stop_recording_callback:
-                            self.stop_recording_callback()
+                    # Check for toggle recording hotkey
+                    if hasattr(key, 'char') and key.char == TOGGLE_RECORDING_KEY:
+                        if self.toggle_recording_callback:
+                            print(f"Hotkey '{TOGGLE_RECORDING_KEY}' pressed - calling toggle callback")
+                            self.toggle_recording_callback()
                     # Check for stop loop hotkey
                     elif hasattr(key, 'name') and key.name.lower() == STOP_LOOP_KEY.lower():
                         if self.is_playing and self.stop_loop_callback:
+                            print(f"Hotkey '{STOP_LOOP_KEY}' pressed - calling stop loop callback")
                             self.stop_loop_callback()
                     elif hasattr(key, 'char') and key.char == STOP_LOOP_KEY:
                         if self.is_playing and self.stop_loop_callback:
+                            print(f"Hotkey '{STOP_LOOP_KEY}' pressed - calling stop loop callback")
                             self.stop_loop_callback()
-                except:
-                    pass
+                except Exception as e:
+                    print(f"Error in hotkey handler: {e}")
             
             self.hotkey_listener = KeyboardListener(on_press=on_hotkey_press, suppress=False)
             self.hotkey_listener.start()
+            print(f"Hotkey listener started - Toggle recording: '{TOGGLE_RECORDING_KEY}', Stop loop: '{STOP_LOOP_KEY}'")
         except Exception as e:
             print(f"Error starting hotkey listener: {e}")
     
-    def set_stop_recording_callback(self, callback):
-        """Set callback for when recording should be stopped via hotkey"""
-        self.stop_recording_callback = callback
+    def set_toggle_recording_callback(self, callback):
+        """Set callback for when recording should be toggled via hotkey"""
+        self.toggle_recording_callback = callback
     
     def set_stop_loop_callback(self, callback):
         """Set callback for when loop should be stopped via hotkey"""

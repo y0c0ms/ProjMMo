@@ -23,7 +23,7 @@ EMERGENCY_STOP_KEY = "esc"
 SAFETY_DELAY = 0.1  # seconds between actions
 
 # Hotkey Settings
-STOP_RECORDING_KEY = "`"  # Default hotkey to stop recording
+TOGGLE_RECORDING_KEY = "`"  # Default hotkey to toggle recording (start/stop)
 STOP_LOOP_KEY = "F12"  # Default hotkey to stop loop playback
 
 # File Paths
