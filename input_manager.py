@@ -252,8 +252,8 @@ class InputManager:
         except:
             key_name = str(key)
         
-        # Skip the stop recording hotkey
-        if key_name == '«':
+        # Skip the toggle recording hotkey
+        if key_name == TOGGLE_RECORDING_KEY:
             return
         
         event = {
@@ -281,8 +281,8 @@ class InputManager:
         except:
             key_name = str(key)
         
-        # Skip the stop recording hotkey
-        if key_name == '«':
+        # Skip the toggle recording hotkey
+        if key_name == TOGGLE_RECORDING_KEY:
             return
         
         event = {
@@ -495,26 +495,45 @@ class InputManager:
         try:
             def on_hotkey_press(key):
                 try:
+                    # Get key character/name
+                    key_char = None
+                    key_name = None
+                    
+                    if hasattr(key, 'char') and key.char:
+                        key_char = key.char
+                    if hasattr(key, 'name'):
+                        key_name = key.name
+                    
+                    print(f"Hotkey listener detected key: char='{key_char}', name='{key_name}'")
+                    
                     # Check for toggle recording hotkey
-                    if hasattr(key, 'char') and key.char == TOGGLE_RECORDING_KEY:
+                    if key_char == TOGGLE_RECORDING_KEY:
+                        print(f"Toggle recording hotkey '{TOGGLE_RECORDING_KEY}' detected!")
                         if self.toggle_recording_callback:
-                            print(f"Hotkey '{TOGGLE_RECORDING_KEY}' pressed - calling toggle callback")
-                            self.toggle_recording_callback()
-                    # Check for stop loop hotkey
-                    elif hasattr(key, 'name') and key.name.lower() == STOP_LOOP_KEY.lower():
+                            # Run callback in separate thread to avoid blocking
+                            import threading
+                            threading.Thread(target=self.toggle_recording_callback, daemon=True).start()
+                        else:
+                            print("No toggle recording callback set!")
+                    
+                    # Check for stop loop hotkey (F12)
+                    elif key_name and key_name.lower() == STOP_LOOP_KEY.lower():
+                        print(f"Stop loop hotkey '{STOP_LOOP_KEY}' detected!")
                         if self.is_playing and self.stop_loop_callback:
-                            print(f"Hotkey '{STOP_LOOP_KEY}' pressed - calling stop loop callback")
-                            self.stop_loop_callback()
-                    elif hasattr(key, 'char') and key.char == STOP_LOOP_KEY:
-                        if self.is_playing and self.stop_loop_callback:
-                            print(f"Hotkey '{STOP_LOOP_KEY}' pressed - calling stop loop callback")
-                            self.stop_loop_callback()
+                            # Run callback in separate thread to avoid blocking
+                            import threading
+                            threading.Thread(target=self.stop_loop_callback, daemon=True).start()
+                        else:
+                            print("No stop loop callback set or not playing!")
+                            
                 except Exception as e:
                     print(f"Error in hotkey handler: {e}")
             
+            # Create dedicated hotkey listener that runs independently
             self.hotkey_listener = KeyboardListener(on_press=on_hotkey_press, suppress=False)
+            self.hotkey_listener.daemon = True  # Make it a daemon thread
             self.hotkey_listener.start()
-            print(f"Hotkey listener started - Toggle recording: '{TOGGLE_RECORDING_KEY}', Stop loop: '{STOP_LOOP_KEY}'")
+            print(f"Global hotkey listener started - Toggle recording: '{TOGGLE_RECORDING_KEY}', Stop loop: '{STOP_LOOP_KEY}'")
         except Exception as e:
             print(f"Error starting hotkey listener: {e}")
     
