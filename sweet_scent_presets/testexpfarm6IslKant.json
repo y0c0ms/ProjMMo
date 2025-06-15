@@ -1,0 +1,12 @@
+{
+  "sweet_scent_uses": 6,
+  "sweet_scent_animation_delay": 13.5,
+  "initial_e_presses": 8,
+  "initial_e_interval": 0.2,
+  "encounter_loop_duration": 17.0,
+  "encounter_loop_interval": 0.2,
+  "heal_delay": 6.0,
+  "cycle_pause": 1.0,
+  "initial_focus_delay": 2.0,
+  "selected_macro": "move6IslExpFarm"
+}

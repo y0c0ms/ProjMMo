@@ -16,26 +16,121 @@ class WindowManager:
         self.callbacks = []
         
     def find_game_window(self):
-        """Find PokeMMO window handle"""
+        """Find PokeMMO window handle - returns list of candidates but doesn't auto-select"""
         def enum_windows_callback(hwnd, windows):
             if win32gui.IsWindowVisible(hwnd):
                 window_title = win32gui.GetWindowText(hwnd)
-                if GAME_WINDOW_TITLE.lower() in window_title.lower():
-                    windows.append((hwnd, window_title))
+                
+                # Skip our own overlay window
+                if "PokeMMO Overlay" in window_title:
+                    return True
+                
+                # Look for actual PokeMMO game window
+                # The game window usually has titles like "PokeMMO" or contains location names
+                title_lower = window_title.lower()
+                
+                # Skip browsers, YouTube, and other non-game windows
+                skip_keywords = ["youtube", "chrome", "firefox", "edge", "browser", "thorium", "opera", "safari"]
+                if any(skip in title_lower for skip in skip_keywords):
+                    return True
+                
+                # Look for PokeMMO game indicators
+                pokemmo_indicators = [
+                    "pokemmo",  # Base game title
+                    "route",    # Route names
+                    "city",     # City names  
+                    "town",     # Town names
+                    "cave",     # Cave names
+                    "forest",   # Forest names
+                    "island",   # Island names
+                    "meadow",   # Meadow names (like in your screenshot)
+                    "gym",      # Gym names
+                    "center",   # Pokemon Center
+                    "isle",     # Isle names (like Five Isle Meadow)
+                    "ch.",      # Chapter indicators
+                    "lv."       # Level indicators in Pokemon names
+                ]
+                
+                for indicator in pokemmo_indicators:
+                    if indicator in title_lower:
+                        # Additional validation: check window size (PokeMMO windows are typically reasonable sizes)
+                        try:
+                            rect = win32gui.GetWindowRect(hwnd)
+                            width = rect[2] - rect[0]
+                            height = rect[3] - rect[1]
+                            
+                            # PokeMMO windows should be reasonable sizes (not tiny, not huge multi-monitor spans)
+                            if 400 < width < 2000 and 300 < height < 1200:
+                                windows.append((hwnd, window_title, width, height))
+                                print(f"   Found PokeMMO candidate: {window_title} | {width}x{height}")
+                                break
+                            else:
+                                print(f"   Skipping window with unusual size: {width}x{height}")
+                        except:
+                            # If we can't get window rect, skip it
+                            pass
             return True
         
         windows = []
         win32gui.EnumWindows(enum_windows_callback, windows)
         
-        if windows:
-            # Take the first matching window
-            self.game_hwnd = windows[0][0]
-            self.update_game_rect()
+        print(f"🔍 Found {len(windows)} PokeMMO window candidates:")
+        for hwnd, title, width, height in windows:
+            print(f"  - {title} | {width}x{height} | Handle: {hwnd}")
+        
+        if not windows:
+            print("❌ No PokeMMO windows found")
+            print("💡 Make sure PokeMMO is running and visible")
+            print("💡 Looking for windows containing: route, city, town, cave, forest, island, meadow, gym, center, pokemmo, isle, ch., lv.")
+            
+            # List all visible windows for debugging
+            print("\n🔍 All visible windows:")
+            self.list_all_windows()
+        
+        return windows
+    
+    def select_window_by_handle(self, hwnd):
+        """Manually select a window by its handle"""
+        try:
+            if win32gui.IsWindow(hwnd) and win32gui.IsWindowVisible(hwnd):
+                self.game_hwnd = hwnd
+                self.update_game_rect()
+                window_title = win32gui.GetWindowText(hwnd)
+                print(f"✓ Selected PokeMMO window: {window_title} (Handle: {hwnd})")
+                return True
+            else:
+                print(f"❌ Invalid window handle: {hwnd}")
+                return False
+        except Exception as e:
+            print(f"❌ Error selecting window: {e}")
+            return False
+    
+    def list_all_windows(self):
+        """List all visible windows for debugging"""
+        def enum_all_windows(hwnd, windows):
+            if win32gui.IsWindowVisible(hwnd):
+                try:
+                    window_title = win32gui.GetWindowText(hwnd)
+                    if window_title.strip():  # Only show windows with titles
+                        rect = win32gui.GetWindowRect(hwnd)
+                        width = rect[2] - rect[0]
+                        height = rect[3] - rect[1]
+                        windows.append((hwnd, window_title, width, height, rect))
+                except:
+                    pass
             return True
         
-        self.game_hwnd = None
-        self.game_rect = None
-        return False
+        all_windows = []
+        win32gui.EnumWindows(enum_all_windows, all_windows)
+        
+        # Sort by window size (larger windows first)
+        all_windows.sort(key=lambda x: x[2] * x[3], reverse=True)
+        
+        for i, (hwnd, title, width, height, rect) in enumerate(all_windows[:15]):  # Show top 15
+            print(f"  {i+1:2d}. {title[:60]:<60} | {width:4d}x{height:4d} | Handle: {hwnd}")
+        
+        if len(all_windows) > 15:
+            print(f"     ... and {len(all_windows) - 15} more windows")
     
     def update_game_rect(self):
         """Update game window rectangle"""

@@ -1,14 +1,13 @@
 """
 Input Manager for recording and playing back keyboard/mouse events
+Uses Windows API for better compatibility and reliability
 """
 import time
 import json
 import threading
-from pynput import mouse, keyboard
-from pynput.mouse import Button, Listener as MouseListener
-from pynput.keyboard import Key, Listener as KeyboardListener
 import win32api
 import win32con
+import win32gui
 from config import *
 
 class InputManager:
@@ -19,10 +18,13 @@ class InputManager:
         self.recorded_events = []
         self.start_time = None
         
-        # Listeners
-        self.mouse_listener = None
-        self.keyboard_listener = None
-        self.hotkey_listener = None
+        # Recording options
+        self.record_mouse_movements = True  # Can be toggled
+        
+        # Hook handles
+        self.keyboard_hook = None
+        self.mouse_hook = None
+        self.hotkey_hook = None
         
         # Playback
         self.playback_thread = None
@@ -34,9 +36,19 @@ class InputManager:
         # Recording control callbacks
         self.toggle_recording_callback = None
         self.stop_loop_callback = None
+        self.emergency_stop_callback = None
+        
+        # Hook thread
+        self.hook_thread = None
+        self.hook_thread_running = False
         
         # Start global hotkey listener
         self.start_hotkey_listener()
+        
+    def set_record_mouse_movements(self, enabled):
+        """Toggle mouse movement recording"""
+        self.record_mouse_movements = enabled
+        print(f"Mouse movement recording: {'enabled' if enabled else 'disabled'}")
         
     def start_recording(self):
         """Start recording input events"""
@@ -44,40 +56,27 @@ class InputManager:
             return False
         
         # Move mouse to center of game window for consistent starting position
-        self._center_mouse_in_game()
+        if self.record_mouse_movements:
+            self._center_mouse_in_game()
         
         self.is_recording = True
         self.recorded_events = []
         self.start_time = time.time()
         
         print(f"Recording started at {self.start_time}")
+        print(f"Mouse movements: {'enabled' if self.record_mouse_movements else 'disabled'}")
         print(f"Game running: {self.window_manager.is_game_running()}")
         if self.window_manager.game_rect:
             print(f"Game window rect: {self.window_manager.game_rect}")
         else:
             print("No game window rect found!")
         
-        # Start listeners with better error handling
+        # Start hooks
         try:
-            # Create listeners with error handling wrappers
-            self.mouse_listener = MouseListener(
-                on_move=self._safe_on_mouse_move,
-                on_click=self._safe_on_mouse_click,
-                on_scroll=self._safe_on_mouse_scroll,
-                suppress=False
-            )
-            
-            self.keyboard_listener = KeyboardListener(
-                on_press=self._safe_on_key_press,
-                on_release=self._safe_on_key_release,
-                suppress=False
-            )
-            
-            self.mouse_listener.start()
-            self.keyboard_listener.start()
-            print("Input listeners started successfully")
+            self._start_recording_hooks()
+            print("Input hooks started successfully")
         except Exception as e:
-            print(f"Error starting input listeners: {e}")
+            print(f"Error starting input hooks: {e}")
             return False
         
         return True
@@ -89,73 +88,115 @@ class InputManager:
         
         self.is_recording = False
         
-        # Stop listeners
-        if self.mouse_listener:
-            self.mouse_listener.stop()
-        if self.keyboard_listener:
-            self.keyboard_listener.stop()
+        # Stop hooks
+        self._stop_recording_hooks()
         
         # Move mouse back to center for consistent ending position
-        self._center_mouse_in_game()
+        if self.record_mouse_movements:
+            self._center_mouse_in_game()
         
+        print(f"Recording stopped. Recorded {len(self.recorded_events)} events")
         return self.recorded_events.copy()
     
-    def _get_timestamp(self):
-        """Get current timestamp relative to recording start"""
-        return time.time() - self.start_time
+    def _start_recording_hooks(self):
+        """Start Windows API hooks for recording"""
+        def keyboard_hook_proc(nCode, wParam, lParam):
+            if nCode >= 0 and self.is_recording:
+                try:
+                    self._on_keyboard_event(wParam, lParam)
+                except Exception as e:
+                    print(f"Error in keyboard hook: {e}")
+            return win32api.CallNextHookEx(self.keyboard_hook, nCode, wParam, lParam)
+        
+        def mouse_hook_proc(nCode, wParam, lParam):
+            if nCode >= 0 and self.is_recording and self.record_mouse_movements:
+                try:
+                    self._on_mouse_event(wParam, lParam)
+                except Exception as e:
+                    print(f"Error in mouse hook: {e}")
+            return win32api.CallNextHookEx(self.mouse_hook, nCode, wParam, lParam)
+        
+        # Install hooks
+        self.keyboard_hook = win32api.SetWindowsHookEx(
+            win32con.WH_KEYBOARD_LL, keyboard_hook_proc, win32api.GetModuleHandle(None), 0)
+        
+        if self.record_mouse_movements:
+            self.mouse_hook = win32api.SetWindowsHookEx(
+                win32con.WH_MOUSE_LL, mouse_hook_proc, win32api.GetModuleHandle(None), 0)
     
-    def _safe_on_mouse_move(self, x, y):
-        """Safe wrapper for mouse move events"""
-        try:
-            self._on_mouse_move(x, y)
-        except Exception as e:
-            print(f"Error in mouse move handler: {e}")
+    def _stop_recording_hooks(self):
+        """Stop Windows API hooks"""
+        if self.keyboard_hook:
+            win32api.UnhookWindowsHookEx(self.keyboard_hook)
+            self.keyboard_hook = None
+        if self.mouse_hook:
+            win32api.UnhookWindowsHookEx(self.mouse_hook)
+            self.mouse_hook = None
     
-    def _safe_on_mouse_click(self, x, y, button, pressed):
-        """Safe wrapper for mouse click events"""
-        try:
-            self._on_mouse_click(x, y, button, pressed)
-        except Exception as e:
-            print(f"Error in mouse click handler: {e}")
-    
-    def _safe_on_mouse_scroll(self, x, y, dx, dy):
-        """Safe wrapper for mouse scroll events"""
-        try:
-            self._on_mouse_scroll(x, y, dx, dy)
-        except Exception as e:
-            print(f"Error in mouse scroll handler: {e}")
-    
-    def _safe_on_key_press(self, key):
-        """Safe wrapper for key press events"""
-        try:
-            self._on_key_press(key)
-        except Exception as e:
-            print(f"Error in key press handler: {e}")
-    
-    def _safe_on_key_release(self, key):
-        """Safe wrapper for key release events"""
-        try:
-            self._on_key_release(key)
-        except Exception as e:
-            print(f"Error in key release handler: {e}")
-    
-    def _on_mouse_move(self, x, y):
-        """Handle mouse movement"""
+    def _on_keyboard_event(self, wParam, lParam):
+        """Handle keyboard events during recording"""
         if not self.is_recording:
             return
         
-        print(f"Mouse move detected at {x}, {y}")
-        
-        # Only record when game is running (less strict than active)
+        # Only record when game is running
         if not self.window_manager.is_game_running():
-            print("Game not running, skipping mouse move")
             return
+        
+        # Get key info
+        vk_code = lParam[0] if isinstance(lParam, tuple) else win32api.LOWORD(lParam)
+        pressed = wParam in [win32con.WM_KEYDOWN, win32con.WM_SYSKEYDOWN]
+        
+        # Get key name
+        key_name = self._get_key_name_from_vk(vk_code)
+        if not key_name:
+            return
+        
+        # Skip the recording toggle key to avoid recursion
+        if key_name == TOGGLE_RECORDING_KEY:
+            return
+        
+        event = {
+            'timestamp': self._get_timestamp(),
+            'type': 'key_press' if pressed else 'key_release',
+            'key': key_name,
+            'vk_code': vk_code
+        }
+        
+        self.recorded_events.append(event)
+        print(f"✓ Recorded key {key_name} {'press' if pressed else 'release'}: {len(self.recorded_events)} events total")
+    
+    def _on_mouse_event(self, wParam, lParam):
+        """Handle mouse events during recording"""
+        if not self.is_recording or not self.record_mouse_movements:
+            return
+        
+        # Only record when game is running
+        if not self.window_manager.is_game_running():
+            return
+        
+        # Parse mouse data
+        if isinstance(lParam, tuple) and len(lParam) >= 2:
+            x, y = lParam[0], lParam[1]
+        else:
+            # Fallback to current cursor position
+            x, y = win32gui.GetCursorPos()
         
         # Check if mouse is within game window bounds
         if not self._is_mouse_in_game_window(x, y):
-            print(f"Mouse outside game window ({x}, {y}), skipping")
             return
         
+        # Handle different mouse events
+        if wParam == win32con.WM_MOUSEMOVE:
+            self._record_mouse_move(x, y)
+        elif wParam in [win32con.WM_LBUTTONDOWN, win32con.WM_LBUTTONUP]:
+            self._record_mouse_click(x, y, 'left', wParam == win32con.WM_LBUTTONDOWN)
+        elif wParam in [win32con.WM_RBUTTONDOWN, win32con.WM_RBUTTONUP]:
+            self._record_mouse_click(x, y, 'right', wParam == win32con.WM_RBUTTONDOWN)
+        elif wParam in [win32con.WM_MBUTTONDOWN, win32con.WM_MBUTTONUP]:
+            self._record_mouse_click(x, y, 'middle', wParam == win32con.WM_MBUTTONDOWN)
+    
+    def _record_mouse_move(self, x, y):
+        """Record mouse movement with threshold"""
         # Check movement threshold
         if abs(x - self.last_mouse_pos[0]) < MOUSE_MOVE_THRESHOLD and \
            abs(y - self.last_mouse_pos[1]) < MOUSE_MOVE_THRESHOLD:
@@ -178,23 +219,8 @@ class InputManager:
         self.recorded_events.append(event)
         print(f"✓ Recorded mouse move: {len(self.recorded_events)} events total")
     
-    def _on_mouse_click(self, x, y, button, pressed):
-        """Handle mouse clicks"""
-        if not self.is_recording:
-            return
-        
-        print(f"Mouse {button.name} {'press' if pressed else 'release'} at {x}, {y}")
-        
-        # Only record when game is running (less strict than active)
-        if not self.window_manager.is_game_running():
-            print("Game not running, skipping mouse click")
-            return
-        
-        # Check if click is within game window bounds
-        if not self._is_mouse_in_game_window(x, y):
-            print(f"Click outside game window ({x}, {y}), skipping")
-            return
-        
+    def _record_mouse_click(self, x, y, button, pressed):
+        """Record mouse click"""
         # Convert to game coordinates
         game_x, game_y = self.window_manager.screen_to_game_coords(x, y)
         
@@ -203,111 +229,81 @@ class InputManager:
             'type': 'mouse_click',
             'x': game_x,
             'y': game_y,
+            'button': button,
+            'pressed': pressed,
             'screen_x': x,
-            'screen_y': y,
-            'button': button.name,
-            'pressed': pressed
+            'screen_y': y
         }
         
         self.recorded_events.append(event)
-        print(f"✓ Recorded mouse {button.name} click: {len(self.recorded_events)} events total")
+        print(f"✓ Recorded mouse {button} {'press' if pressed else 'release'}: {len(self.recorded_events)} events total")
     
-    def _on_mouse_scroll(self, x, y, dx, dy):
-        """Handle mouse scroll"""
-        if not self.is_recording:
-            return
-        
-        # Only record when game is active
-        if not self.window_manager.is_game_active():
-            return
-        
-        # Convert to game coordinates  
-        game_x, game_y = self.window_manager.screen_to_game_coords(x, y)
-        
-        event = {
-            'timestamp': self._get_timestamp(),
-            'type': 'mouse_scroll',
-            'x': game_x,
-            'y': game_y,
-            'screen_x': x,
-            'screen_y': y,
-            'dx': dx,
-            'dy': dy
+    def _get_timestamp(self):
+        """Get current timestamp relative to recording start"""
+        return time.time() - self.start_time
+    
+    def _get_key_name_from_vk(self, vk_code):
+        """Convert virtual key code to key name"""
+        key_map = {
+            # Letters (A-Z)
+            **{ord(chr(i)): chr(i).lower() for i in range(ord('A'), ord('Z') + 1)},
+            # Numbers (0-9)
+            **{ord(str(i)): str(i) for i in range(10)},
+            # Function keys
+            win32con.VK_F1: 'f1', win32con.VK_F2: 'f2', win32con.VK_F3: 'f3',
+            win32con.VK_F4: 'f4', win32con.VK_F5: 'f5', win32con.VK_F6: 'f6',
+            win32con.VK_F7: 'f7', win32con.VK_F8: 'f8', win32con.VK_F9: 'f9',
+            win32con.VK_F10: 'f10', win32con.VK_F11: 'f11', win32con.VK_F12: 'f12',
+            # Special keys
+            win32con.VK_SPACE: 'space',
+            win32con.VK_RETURN: 'enter',
+            win32con.VK_ESCAPE: 'esc',
+            win32con.VK_TAB: 'tab',
+            win32con.VK_SHIFT: 'shift',
+            win32con.VK_CONTROL: 'ctrl',
+            win32con.VK_MENU: 'alt',
+            win32con.VK_BACK: 'backspace',
+            win32con.VK_DELETE: 'delete',
+            win32con.VK_INSERT: 'insert',
+            win32con.VK_HOME: 'home',
+            win32con.VK_END: 'end',
+            win32con.VK_PRIOR: 'page_up',
+            win32con.VK_NEXT: 'page_down',
+            win32con.VK_UP: 'up',
+            win32con.VK_DOWN: 'down',
+            win32con.VK_LEFT: 'left',
+            win32con.VK_RIGHT: 'right',
+            # Common symbols
+            win32con.VK_OEM_3: '`',  # backtick
+            win32con.VK_OEM_MINUS: '-',
+            win32con.VK_OEM_PLUS: '=',
+            win32con.VK_OEM_4: '[',
+            win32con.VK_OEM_6: ']',
+            win32con.VK_OEM_5: '\\',
+            win32con.VK_OEM_1: ';',
+            win32con.VK_OEM_7: "'",
+            win32con.VK_OEM_COMMA: ',',
+            win32con.VK_OEM_PERIOD: '.',
+            win32con.VK_OEM_2: '/',
         }
         
-        self.recorded_events.append(event)
-    
-    def _on_key_press(self, key):
-        """Handle key press"""
-        if not self.is_recording:
-            return
-        
-        # Only record when game is running (less strict than active)
-        if not self.window_manager.is_game_running():
-            return
-        
-        # Get key name
-        try:
-            key_name = key.char if hasattr(key, 'char') and key.char else key.name
-        except:
-            key_name = str(key)
-        
-        # Skip the toggle recording hotkey
-        if key_name == TOGGLE_RECORDING_KEY:
-            return
-        
-        event = {
-            'timestamp': self._get_timestamp(),
-            'type': 'key_press', 
-            'key': key_name,
-            'pressed': True
-        }
-        
-        self.recorded_events.append(event)
-        print(f"Recorded key press '{key_name}': {len(self.recorded_events)} events")
-    
-    def _on_key_release(self, key):
-        """Handle key release"""
-        if not self.is_recording:
-            return
-        
-        # Only record when game is running (less strict than active)
-        if not self.window_manager.is_game_running():
-            return
-        
-        # Get key name
-        try:
-            key_name = key.char if hasattr(key, 'char') and key.char else key.name
-        except:
-            key_name = str(key)
-        
-        # Skip the toggle recording hotkey
-        if key_name == TOGGLE_RECORDING_KEY:
-            return
-        
-        event = {
-            'timestamp': self._get_timestamp(),
-            'type': 'key_release',
-            'key': key_name, 
-            'pressed': False
-        }
-        
-        self.recorded_events.append(event)
-    
-    def play_macro(self, events, speed=1.0, loop_count=1, callback=None):
-        """Play back recorded events"""
+        return key_map.get(vk_code)
+
+    def play_macro(self, events, speed=1.0, loop_count=1, callback=None, timeout=30):
+        """Play back recorded macro with increased timeout"""
         if self.is_playing:
+            print("Already playing a macro")
             return False
         
         self.is_playing = True
         self.stop_playback = False
         
+        # Start playback in separate thread
         self.playback_thread = threading.Thread(
             target=self._playback_loop,
-            args=(events, speed, loop_count, callback),
+            args=(events, speed, loop_count, callback, timeout),
             daemon=True
         )
-        
         self.playback_thread.start()
         return True
     
@@ -315,152 +311,217 @@ class InputManager:
         """Stop macro playback"""
         self.stop_playback = True
         self.is_playing = False
-        if self.playback_thread and self.playback_thread.is_alive():
-            self.playback_thread.join(timeout=2.0)
+        print("🛑 Macro playback stopped")
     
-    def _playback_loop(self, events, speed, loop_count, callback):
-        """Main playback loop"""
+    def _playback_loop(self, events, speed, loop_count, callback, timeout):
+        """Main playback loop with better error handling"""
         try:
-            loop = 0
-            while True:
+            start_time = time.time()
+            
+            for loop in range(loop_count):
                 if self.stop_playback:
                     break
                 
-                # Check if we've reached the loop limit (unless infinite)
-                if loop_count != -1 and loop >= loop_count:
+                # Check timeout
+                if time.time() - start_time > timeout:
+                    print(f"⚠ Macro timed out after {timeout}s")
+                    if callback:
+                        callback("timeout", {"loop": loop + 1, "total": loop_count})
                     break
                 
-                # Move mouse to center before each loop iteration for consistency
-                self._center_mouse_in_game()
-                time.sleep(0.2)  # Small delay after centering
+                print(f"🔄 Starting loop {loop + 1}/{loop_count}")
+                
+                if callback:
+                    callback("loop_start", {"loop": loop + 1, "total": loop_count})
                 
                 last_timestamp = 0
+                events_executed = 0
+                events_failed = 0
                 
                 for event in events:
                     if self.stop_playback:
                         break
                     
-                    # Wait for correct timing
-                    wait_time = (event['timestamp'] - last_timestamp) / speed
-                    if wait_time > 0:
-                        time.sleep(wait_time)
+                    # Calculate delay
+                    delay = (event['timestamp'] - last_timestamp) / speed
+                    if delay > 0:
+                        time.sleep(delay)
                     
-                    # Execute event
-                    self._execute_event(event)
+                    # Execute event with error handling
+                    try:
+                        success = self._execute_event(event)
+                        if success:
+                            events_executed += 1
+                        else:
+                            events_failed += 1
+                            # Don't break on mouse movement failures
+                            if event['type'] != 'mouse_move':
+                                print(f"⚠ Critical event failed: {event['type']}")
+                    except Exception as e:
+                        print(f"❌ Event execution error: {e}")
+                        events_failed += 1
+                    
                     last_timestamp = event['timestamp']
                 
-                # Break out if stop was requested during event execution
-                if self.stop_playback:
-                    break
-                    
-                loop += 1
+                print(f"✅ Loop {loop + 1} completed: {events_executed} events, {events_failed} failed")
                 
-                # Callback for loop completion
                 if callback:
-                    callback('loop_completed', loop)
-                
-                # Small delay between loops
-                if loop_count == -1 or loop < loop_count:
-                    time.sleep(0.5)
-        
+                    callback("loop_complete", {
+                        "loop": loop + 1, 
+                        "total": loop_count, 
+                        "events_executed": events_executed,
+                        "events_failed": events_failed
+                    })
+            
+            print(f"🏁 Macro playback finished")
+            
         except Exception as e:
+            print(f"❌ Playback error: {e}")
             if callback:
-                callback('error', str(e))
-        
+                callback("error", {"error": str(e)})
         finally:
             self.is_playing = False
             if callback:
-                callback('playback_finished', None)
+                callback("complete", {"success": not self.stop_playback})
     
     def _execute_event(self, event):
-        """Execute a single event"""
+        """Execute a single event with improved error handling"""
         try:
-            if event['type'] == 'mouse_move':
-                # Convert back to screen coordinates
-                screen_x, screen_y = self.window_manager.game_to_screen_coords(
-                    event['x'], event['y']
-                )
-                win32api.SetCursorPos((int(screen_x), int(screen_y)))
+            event_type = event['type']
             
-            elif event['type'] == 'mouse_click':
-                # Convert back to screen coordinates
-                screen_x, screen_y = self.window_manager.game_to_screen_coords(
-                    event['x'], event['y']
-                )
+            if event_type == 'mouse_move':
+                return self._execute_mouse_move(event)
+            elif event_type == 'mouse_click':
+                return self._execute_mouse_click(event)
+            elif event_type in ['key_press', 'key_release']:
+                return self._execute_key_event(event)
+            else:
+                print(f"⚠ Unknown event type: {event_type}")
+                return False
                 
-                # Set cursor position
-                win32api.SetCursorPos((int(screen_x), int(screen_y)))
-                
-                # Determine button
-                if event['button'] == 'left':
-                    down_flag = win32con.MOUSEEVENTF_LEFTDOWN
-                    up_flag = win32con.MOUSEEVENTF_LEFTUP
-                elif event['button'] == 'right':
-                    down_flag = win32con.MOUSEEVENTF_RIGHTDOWN
-                    up_flag = win32con.MOUSEEVENTF_RIGHTUP
-                elif event['button'] == 'middle':
-                    down_flag = win32con.MOUSEEVENTF_MIDDLEDOWN
-                    up_flag = win32con.MOUSEEVENTF_MIDDLEUP
-                else:
-                    return
-                
-                # Send click
-                if event['pressed']:
-                    win32api.mouse_event(down_flag, 0, 0, 0, 0)
-                else:
-                    win32api.mouse_event(up_flag, 0, 0, 0, 0)
-            
-            elif event['type'] == 'mouse_scroll':
-                # Convert back to screen coordinates
-                screen_x, screen_y = self.window_manager.game_to_screen_coords(
-                    event['x'], event['y']
-                )
-                win32api.SetCursorPos((int(screen_x), int(screen_y)))
-                
-                # Send scroll
-                scroll_amount = int(event['dy'] * 120)  # Windows scroll units
-                win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, scroll_amount, 0)
-            
-            elif event['type'] in ['key_press', 'key_release']:
-                # Handle keyboard events
-                self._send_key_event(event['key'], event['pressed'])
-        
         except Exception as e:
-            print(f"Error executing event: {e}")
+            print(f"❌ Event execution failed: {e}")
+            return False
     
-    def _send_key_event(self, key_name, pressed):
-        """Send keyboard event"""
+    def _execute_mouse_move(self, event):
+        """Execute mouse movement with better error handling"""
         try:
-            # Convert key name to virtual key code
-            vk_code = self._get_virtual_key_code(key_name)
-            if vk_code:
-                if pressed:
-                    win32api.keybd_event(vk_code, 0, 0, 0)
-                else:
-                    win32api.keybd_event(vk_code, 0, win32con.KEYEVENTF_KEYUP, 0)
-        except:
-            pass
+            # Convert game coordinates to screen coordinates
+            screen_x, screen_y = self.window_manager.game_to_screen_coords(event['x'], event['y'])
+            
+            # Try to set cursor position
+            try:
+                win32api.SetCursorPos((screen_x, screen_y))
+                return True
+            except Exception as e:
+                # SetCursorPos can fail for various reasons, but it's not critical
+                # Just skip the mouse movement but don't stop the macro
+                print(f"⚠ Mouse move failed (non-critical): {e}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Mouse move coordinate conversion failed: {e}")
+            return False
     
+    def _execute_mouse_click(self, event):
+        """Execute mouse click"""
+        try:
+            # Convert game coordinates to screen coordinates
+            screen_x, screen_y = self.window_manager.game_to_screen_coords(event['x'], event['y'])
+            
+            # Move mouse first
+            try:
+                win32api.SetCursorPos((screen_x, screen_y))
+            except:
+                # If we can't move the mouse, still try to click at current position
+                screen_x, screen_y = win32gui.GetCursorPos()
+            
+            # Determine button and action
+            button = event.get('button', 'left')
+            pressed = event.get('pressed', True)
+            
+            if button == 'left':
+                flag = win32con.MOUSEEVENTF_LEFTDOWN if pressed else win32con.MOUSEEVENTF_LEFTUP
+            elif button == 'right':
+                flag = win32con.MOUSEEVENTF_RIGHTDOWN if pressed else win32con.MOUSEEVENTF_RIGHTUP
+            elif button == 'middle':
+                flag = win32con.MOUSEEVENTF_MIDDLEDOWN if pressed else win32con.MOUSEEVENTF_MIDDLEUP
+            else:
+                print(f"⚠ Unknown mouse button: {button}")
+                return False
+            
+            win32api.mouse_event(flag, screen_x, screen_y, 0, 0)
+            return True
+            
+        except Exception as e:
+            print(f"❌ Mouse click failed: {e}")
+            return False
+    
+    def _execute_key_event(self, event):
+        """Execute keyboard event"""
+        try:
+            key_name = event['key']
+            pressed = event['type'] == 'key_press'
+            
+            vk_code = self._get_virtual_key_code(key_name)
+            if not vk_code:
+                print(f"⚠ Unknown key: {key_name}")
+                return False
+            
+            flags = 0 if pressed else win32con.KEYEVENTF_KEYUP
+            win32api.keybd_event(vk_code, 0, flags, 0)
+            return True
+            
+        except Exception as e:
+            print(f"❌ Key event failed: {e}")
+            return False
+
     def _get_virtual_key_code(self, key_name):
-        """Get Windows virtual key code from key name"""
+        """Get virtual key code from key name"""
         key_map = {
+            # Letters
+            **{chr(i).lower(): ord(chr(i)) for i in range(ord('A'), ord('Z') + 1)},
+            # Numbers
+            **{str(i): ord(str(i)) for i in range(10)},
+            # Function keys
+            'f1': win32con.VK_F1, 'f2': win32con.VK_F2, 'f3': win32con.VK_F3,
+            'f4': win32con.VK_F4, 'f5': win32con.VK_F5, 'f6': win32con.VK_F6,
+            'f7': win32con.VK_F7, 'f8': win32con.VK_F8, 'f9': win32con.VK_F9,
+            'f10': win32con.VK_F10, 'f11': win32con.VK_F11, 'f12': win32con.VK_F12,
+            # Special keys
             'space': win32con.VK_SPACE,
             'enter': win32con.VK_RETURN,
-            'tab': win32con.VK_TAB,
             'esc': win32con.VK_ESCAPE,
+            'escape': win32con.VK_ESCAPE,
+            'tab': win32con.VK_TAB,
             'shift': win32con.VK_SHIFT,
             'ctrl': win32con.VK_CONTROL,
+            'control': win32con.VK_CONTROL,
             'alt': win32con.VK_MENU,
+            'backspace': win32con.VK_BACK,
+            'delete': win32con.VK_DELETE,
+            'insert': win32con.VK_INSERT,
+            'home': win32con.VK_HOME,
+            'end': win32con.VK_END,
+            'page_up': win32con.VK_PRIOR,
+            'page_down': win32con.VK_NEXT,
             'up': win32con.VK_UP,
             'down': win32con.VK_DOWN,
             'left': win32con.VK_LEFT,
             'right': win32con.VK_RIGHT,
-            # Add more as needed
+            # Symbols
+            '`': win32con.VK_OEM_3,
+            '-': win32con.VK_OEM_MINUS,
+            '=': win32con.VK_OEM_PLUS,
+            '[': win32con.VK_OEM_4,
+            ']': win32con.VK_OEM_6,
+            '\\': win32con.VK_OEM_5,
+            ';': win32con.VK_OEM_1,
+            "'": win32con.VK_OEM_7,
+            ',': win32con.VK_OEM_COMMA,
+            '.': win32con.VK_OEM_PERIOD,
+            '/': win32con.VK_OEM_2,
         }
-        
-        # Handle single characters
-        if len(key_name) == 1:
-            return ord(key_name.upper())
         
         return key_map.get(key_name.lower())
     
@@ -472,70 +533,84 @@ class InputManager:
         
         try:
             # Calculate center of game window
-            x1, y1, x2, y2 = self.window_manager.game_rect
-            center_x = (x1 + x2) // 2
-            center_y = (y1 + y2) // 2
+            left, top, right, bottom = self.window_manager.game_rect
+            center_x = (left + right) // 2
+            center_y = (top + bottom) // 2
             
-            print(f"Centering mouse to ({center_x}, {center_y}) in game window ({x1}, {y1}) to ({x2}, {y2})")
+            print(f"Centering mouse to ({center_x}, {center_y}) in game window")
             
             # Move mouse to center
             win32api.SetCursorPos((center_x, center_y))
             time.sleep(0.2)  # Small delay to ensure position is set
             
-            # Verify the position was set
-            import win32gui
-            current_pos = win32gui.GetCursorPos()
-            print(f"Mouse position after centering: {current_pos}")
-            
         except Exception as e:
             print(f"Error centering mouse: {e}")
     
     def start_hotkey_listener(self):
-        """Start global hotkey listener for recording control"""
-        try:
-            def on_hotkey_press(key):
+        """Start global hotkey listener using Windows API"""
+        def hotkey_hook_proc(nCode, wParam, lParam):
+            if nCode >= 0:
                 try:
-                    # Get key character/name
-                    key_char = None
-                    key_name = None
-                    
-                    if hasattr(key, 'char') and key.char:
-                        key_char = key.char
-                    if hasattr(key, 'name'):
-                        key_name = key.name
-                    
-                    print(f"Hotkey listener detected key: char='{key_char}', name='{key_name}'")
-                    
-                    # Check for toggle recording hotkey
-                    if key_char == TOGGLE_RECORDING_KEY:
-                        print(f"Toggle recording hotkey '{TOGGLE_RECORDING_KEY}' detected!")
-                        if self.toggle_recording_callback:
-                            # Run callback in separate thread to avoid blocking
-                            import threading
-                            threading.Thread(target=self.toggle_recording_callback, daemon=True).start()
-                        else:
-                            print("No toggle recording callback set!")
-                    
-                    # Check for stop loop hotkey (F12)
-                    elif key_name and key_name.lower() == STOP_LOOP_KEY.lower():
-                        print(f"Stop loop hotkey '{STOP_LOOP_KEY}' detected!")
-                        if self.is_playing and self.stop_loop_callback:
-                            # Run callback in separate thread to avoid blocking
-                            import threading
-                            threading.Thread(target=self.stop_loop_callback, daemon=True).start()
-                        else:
-                            print("No stop loop callback set or not playing!")
-                            
+                    self._handle_hotkey(wParam, lParam)
                 except Exception as e:
                     print(f"Error in hotkey handler: {e}")
+            return win32api.CallNextHookEx(self.hotkey_hook, nCode, wParam, lParam)
+        
+        try:
+            # Install global keyboard hook for hotkeys
+            self.hotkey_hook = win32api.SetWindowsHookEx(
+                win32con.WH_KEYBOARD_LL, hotkey_hook_proc, win32api.GetModuleHandle(None), 0)
             
-            # Create dedicated hotkey listener that runs independently
-            self.hotkey_listener = KeyboardListener(on_press=on_hotkey_press, suppress=False)
-            self.hotkey_listener.daemon = True  # Make it a daemon thread
-            self.hotkey_listener.start()
             print(f"Global hotkey listener started - Toggle recording: '{TOGGLE_RECORDING_KEY}', Stop loop: '{STOP_LOOP_KEY}'")
+            
+            # Start message pump in separate thread
+            self.hook_thread_running = True
+            self.hook_thread = threading.Thread(target=self._message_pump, daemon=True)
+            self.hook_thread.start()
+            
         except Exception as e:
             print(f"Error starting hotkey listener: {e}")
+    
+    def _message_pump(self):
+        """Message pump for Windows hooks"""
+        try:
+            while self.hook_thread_running:
+                # Simple sleep-based approach instead of complex message pumping
+                time.sleep(0.01)  # Small delay to prevent high CPU usage
+        except Exception as e:
+            print(f"Message pump error: {e}")
+    
+    def _handle_hotkey(self, wParam, lParam):
+        """Handle hotkey events"""
+        if wParam not in [win32con.WM_KEYDOWN, win32con.WM_SYSKEYDOWN]:
+            return
+        
+        # Get key info
+        vk_code = lParam[0] if isinstance(lParam, tuple) else win32api.LOWORD(lParam)
+        key_name = self._get_key_name_from_vk(vk_code)
+        
+        if not key_name:
+            return
+        
+        # Handle toggle recording hotkey
+        if key_name == TOGGLE_RECORDING_KEY:
+            print(f"Toggle recording hotkey '{TOGGLE_RECORDING_KEY}' detected!")
+            if self.toggle_recording_callback:
+                threading.Thread(target=self.toggle_recording_callback, daemon=True).start()
+        
+        # Handle stop loop hotkey
+        elif key_name.lower() == STOP_LOOP_KEY.lower():
+            print(f"Stop loop hotkey '{STOP_LOOP_KEY}' detected!")
+            if self.is_playing and self.stop_loop_callback:
+                threading.Thread(target=self.stop_loop_callback, daemon=True).start()
+        
+        # Handle P key emergency stop (only when not recording)
+        elif key_name.lower() == 'p' and not self.is_recording:
+            print("P key detected - emergency stop!")
+            if self.is_playing:
+                self.stop_macro()
+                if self.emergency_stop_callback:
+                    threading.Thread(target=self.emergency_stop_callback, daemon=True).start()
     
     def set_toggle_recording_callback(self, callback):
         """Set callback for when recording should be toggled via hotkey"""
@@ -545,24 +620,71 @@ class InputManager:
         """Set callback for when loop should be stopped via hotkey"""
         self.stop_loop_callback = callback
     
+    def set_emergency_stop_callback(self, callback):
+        """Set callback for when emergency stop is triggered via P key"""
+        self.emergency_stop_callback = callback
+    
     def _is_mouse_in_game_window(self, x, y):
         """Check if mouse coordinates are within game window bounds"""
         if not self.window_manager.game_rect:
-            print("No game window rect available")
             return False
         
-        x1, y1, x2, y2 = self.window_manager.game_rect
-        in_bounds = x1 <= x <= x2 and y1 <= y <= y2
-        print(f"Game window bounds: ({x1}, {y1}) to ({x2}, {y2}), mouse at ({x}, {y}), in bounds: {in_bounds}")
-        return in_bounds
+        left, top, right, bottom = self.window_manager.game_rect
+        return left <= x <= right and top <= y <= bottom
     
     def cleanup(self):
-        """Clean up all listeners"""
-        if self.mouse_listener:
-            self.mouse_listener.stop()
-        if self.keyboard_listener:
-            self.keyboard_listener.stop()
-        if self.hotkey_listener:
-            self.hotkey_listener.stop()
+        """Clean up all hooks and threads"""
+        self.hook_thread_running = False
+        
+        if self.keyboard_hook:
+            win32api.UnhookWindowsHookEx(self.keyboard_hook)
+        if self.mouse_hook:
+            win32api.UnhookWindowsHookEx(self.mouse_hook)
+        if self.hotkey_hook:
+            win32api.UnhookWindowsHookEx(self.hotkey_hook)
+        
         if self.is_playing:
-            self.stop_macro() 
+            self.stop_macro()
+    
+    def press_key(self, key_name: str):
+        """Press a key (for Sweet Scent system)"""
+        try:
+            vk_code = self._get_virtual_key_code(key_name)
+            if vk_code:
+                win32api.keybd_event(vk_code, 0, 0, 0)  # Key down
+                print(f"✓ Key {key_name} pressed")
+            else:
+                print(f"❌ Unknown key for press: {key_name}")
+        except Exception as e:
+            print(f"❌ Error pressing key {key_name}: {e}")
+    
+    def release_key(self, key_name: str):
+        """Release a key (for Sweet Scent system)"""
+        try:
+            vk_code = self._get_virtual_key_code(key_name)
+            if vk_code:
+                win32api.keybd_event(vk_code, 0, win32con.KEYEVENTF_KEYUP, 0)  # Key up
+                print(f"✓ Key {key_name} released")
+            else:
+                print(f"❌ Unknown key for release: {key_name}")
+        except Exception as e:
+            print(f"❌ Error releasing key {key_name}: {e}")
+    
+    def click_at_game_coords(self, x: int, y: int):
+        """Click at game coordinates (for Sweet Scent system)"""
+        try:
+            # Convert game coordinates to screen coordinates
+            if hasattr(self, 'window_manager') and self.window_manager.game_rect:
+                left, top, right, bottom = self.window_manager.game_rect
+                screen_x = left + x
+                screen_y = top + y
+                
+                # Move mouse and click
+                win32api.SetCursorPos((screen_x, screen_y))
+                win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, screen_x, screen_y, 0, 0)
+                win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, screen_x, screen_y, 0, 0)
+                print(f"✓ Clicked at game coords ({x}, {y}) -> screen ({screen_x}, {screen_y})")
+            else:
+                print("❌ Cannot click - game window not found")
+        except Exception as e:
+            print(f"❌ Error clicking at ({x}, {y}): {e}") 

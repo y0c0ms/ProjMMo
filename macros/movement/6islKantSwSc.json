@@ -1,0 +1,185 @@
+{
+  "name": "6islKantSwSc",
+  "description": "",
+  "category": "Movement",
+  "hotkey": "",
+  "created_date": "2025-06-14T17:27:49.113505",
+  "duration": 16.38,
+  "event_count": 27,
+  "events": [
+    {
+      "timestamp": 0.2826237678527832,
+      "type": "mouse_click",
+      "x": 1446,
+      "y": 385,
+      "screen_x": 1446,
+      "screen_y": 385,
+      "button": "left",
+      "pressed": true
+    },
+    {
+      "timestamp": 0.38695287704467773,
+      "type": "mouse_click",
+      "x": 1446,
+      "y": 385,
+      "screen_x": 1446,
+      "screen_y": 385,
+      "button": "left",
+      "pressed": false
+    },
+    {
+      "timestamp": 1.529721736907959,
+      "type": "key_press",
+      "key": "e",
+      "pressed": true
+    },
+    {
+      "timestamp": 1.6234967708587646,
+      "type": "key_release",
+      "key": "e",
+      "pressed": false
+    },
+    {
+      "timestamp": 3.3644556999206543,
+      "type": "key_press",
+      "key": "e",
+      "pressed": true
+    },
+    {
+      "timestamp": 3.4479494094848633,
+      "type": "key_release",
+      "key": "e",
+      "pressed": false
+    },
+    {
+      "timestamp": 4.763238906860352,
+      "type": "key_press",
+      "key": "e",
+      "pressed": true
+    },
+    {
+      "timestamp": 4.855498313903809,
+      "type": "key_release",
+      "key": "e",
+      "pressed": false
+    },
+    {
+      "timestamp": 6.027973413467407,
+      "type": "key_press",
+      "key": "e",
+      "pressed": true
+    },
+    {
+      "timestamp": 6.13057804107666,
+      "type": "key_release",
+      "key": "e",
+      "pressed": false
+    },
+    {
+      "timestamp": 7.362988233566284,
+      "type": "key_press",
+      "key": "s",
+      "pressed": true
+    },
+    {
+      "timestamp": 8.758429050445557,
+      "type": "key_release",
+      "key": "s",
+      "pressed": false
+    },
+    {
+      "timestamp": 9.930124044418335,
+      "type": "key_press",
+      "key": "z",
+      "pressed": true
+    },
+    {
+      "timestamp": 10.02275013923645,
+      "type": "key_release",
+      "key": "z",
+      "pressed": false
+    },
+    {
+      "timestamp": 10.273272275924683,
+      "type": "key_press",
+      "key": "d",
+      "pressed": true
+    },
+    {
+      "timestamp": 11.941860914230347,
+      "type": "key_press",
+      "key": "s",
+      "pressed": true
+    },
+    {
+      "timestamp": 12.201605558395386,
+      "type": "key_release",
+      "key": "s",
+      "pressed": false
+    },
+    {
+      "timestamp": 12.493904113769531,
+      "type": "key_release",
+      "key": "d",
+      "pressed": false
+    },
+    {
+      "timestamp": 12.618457078933716,
+      "type": "key_press",
+      "key": "e",
+      "pressed": true
+    },
+    {
+      "timestamp": 12.721141576766968,
+      "type": "key_release",
+      "key": "e",
+      "pressed": false
+    },
+    {
+      "timestamp": 13.667612791061401,
+      "type": "key_press",
+      "key": "e",
+      "pressed": true
+    },
+    {
+      "timestamp": 13.760381698608398,
+      "type": "key_release",
+      "key": "e",
+      "pressed": false
+    },
+    {
+      "timestamp": 14.793735980987549,
+      "type": "key_press",
+      "key": "e",
+      "pressed": true
+    },
+    {
+      "timestamp": 14.897186279296875,
+      "type": "key_release",
+      "key": "e",
+      "pressed": false
+    },
+    {
+      "timestamp": 15.745660781860352,
+      "type": "key_press",
+      "key": "e",
+      "pressed": true
+    },
+    {
+      "timestamp": 15.859126091003418,
+      "type": "key_release",
+      "key": "e",
+      "pressed": false
+    },
+    {
+      "timestamp": 16.66383934020996,
+      "type": "mouse_click",
+      "x": 1621,
+      "y": 378,
+      "screen_x": 1621,
+      "screen_y": 378,
+      "button": "left",
+      "pressed": true
+    }
+  ]
+}

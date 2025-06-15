@@ -1,0 +1,19 @@
+{
+  "sweet_scent_uses": 6,
+  "sweet_scent_animation_delay": 13.0,
+  "initial_e_presses": 6,
+  "initial_e_interval": 0.2,
+  "post_e_delay": 10.0,
+  "encounter_loop_duration": 6.0,
+  "encounter_loop_interval": 0.2,
+  "heal_delay": 3.0,
+  "cycle_pause": 1.0,
+  "initial_focus_delay": 2.0,
+  "use_e_plus_e": false,
+  "selected_macro": "6islKantSwSc",
+  "debug_pokecenter_enabled": true,
+  "debug_s_key_duration": 2.0,
+  "debug_e_key_duration": 3.0,
+  "debug_e_key_interval": 0.2,
+  "debug_check_interval": 60.0
+}

@@ -1,0 +1,14 @@
+{
+  "sweet_scent_uses": 6,
+  "sweet_scent_animation_delay": 12.3,
+  "initial_e_presses": 5,
+  "initial_e_interval": 0.2,
+  "post_e_delay": 8.5,
+  "encounter_loop_duration": 14.0,
+  "encounter_loop_interval": 0.2,
+  "heal_delay": 4.0,
+  "cycle_pause": 1.0,
+  "initial_focus_delay": 2.0,
+  "use_e_plus_e": true,
+  "selected_macro": "SpAtFortreehoenn"
+}

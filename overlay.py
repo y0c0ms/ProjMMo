@@ -22,6 +22,9 @@ class OverlayWindow:
         self.recording_var = tk.StringVar(value="● Record")
         self.game_status_var = tk.StringVar(value="Game: Not Found")
         
+        # Recording options
+        self.record_mouse_var = tk.BooleanVar(value=True)
+        
         # Current recording
         self.current_recording = []
         
@@ -37,6 +40,9 @@ class OverlayWindow:
         
         # Set up loop stop hotkey callback
         self.input_manager.set_stop_loop_callback(self.hotkey_stop_loop)
+        
+        # Set up emergency stop callback
+        self.input_manager.set_emergency_stop_callback(self.emergency_stop)
         
         # Start window monitoring
         self.window_manager.add_callback(self.on_window_event)
@@ -118,11 +124,23 @@ class OverlayWindow:
                   state=tk.DISABLED)
         self.save_btn.pack(side=tk.RIGHT)
         
+        # Recording options frame
+        options_frame = tk.Frame(main_frame, bg=BG_COLOR)
+        options_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        self.mouse_checkbox = ttk.Checkbutton(options_frame, text="🖱️ Record Mouse Movements", 
+                                            variable=self.record_mouse_var,
+                                            command=self._toggle_mouse_recording)
+        self.mouse_checkbox.pack(side=tk.LEFT)
+        
+        tk.Label(options_frame, text="(Uncheck for keyboard-only macros)", 
+                bg=BG_COLOR, fg=ACCENT_COLOR, font=('Arial', 7, 'italic')).pack(side=tk.LEFT, padx=(5, 0))
+        
         # Add hotkey info
         hotkey_frame = tk.Frame(main_frame, bg=BG_COLOR)
         hotkey_frame.pack(fill=tk.X, pady=(0, 5))
         
-        tk.Label(hotkey_frame, text=f"Hotkeys: {TOGGLE_RECORDING_KEY} = Toggle Recording | {STOP_LOOP_KEY} = Stop Loop", 
+        tk.Label(hotkey_frame, text=f"Hotkeys: {TOGGLE_RECORDING_KEY} = Toggle Recording | {STOP_LOOP_KEY} = Stop Loop | P = Emergency Stop", 
                 bg=BG_COLOR, fg=ACCENT_COLOR, font=('Arial', 8, 'italic')).pack(anchor=tk.W)
         
         # Macro list frame
@@ -167,6 +185,11 @@ class OverlayWindow:
         self.macro_listbox.bind('<Double-Button-1>', self.play_selected_macro)
         self.macro_listbox.bind('<Button-3>', self.show_context_menu)
         
+        # Bind P key globally to stop macros
+        self.root.bind('<p>', self.emergency_stop)
+        self.root.bind('<P>', self.emergency_stop)  # Handle both cases
+        self.root.focus_set()  # Make sure window can receive key events
+        
         # Loop controls
         loop_frame = tk.Frame(main_frame, bg=BG_COLOR)
         loop_frame.pack(fill=tk.X, pady=(5, 5))
@@ -186,28 +209,49 @@ class OverlayWindow:
                        command=self._toggle_infinite_loop)
         self.infinite_checkbox.pack(side=tk.LEFT, padx=(10, 0))
         
-        # Control buttons
+        # Control buttons frame - simplified and clear
         control_frame = tk.Frame(main_frame, bg=BG_COLOR)
-        control_frame.pack(fill=tk.X)
+        control_frame.pack(fill=tk.X, pady=(5, 10))
         
-        ttk.Button(control_frame, text="▶ Play", command=self.play_selected_macro,
+        # First row: Play controls
+        play_row = tk.Frame(control_frame, bg=BG_COLOR)
+        play_row.pack(fill=tk.X, pady=(0, 5))
+        
+        ttk.Button(play_row, text="▶ Play", command=self.play_selected_macro,
                   style="Action.TButton").pack(side=tk.LEFT, padx=(0, 5))
         
-        self.loop_btn = ttk.Button(control_frame, text="🔄 Loop", command=self.play_selected_macro_loop,
+        self.loop_btn = ttk.Button(play_row, text="🔄 Loop", command=self.play_selected_macro_loop,
                   style="Action.TButton")
         self.loop_btn.pack(side=tk.LEFT, padx=(0, 5))
         
-        self.stop_loop_btn = ttk.Button(control_frame, text="⏹ Stop Loop", command=self.stop_loop,
+        # STOP MACRO button - bright red and prominent
+        self.stop_macro_btn = tk.Button(play_row, 
+                                       text="🛑 STOP MACRO", 
+                                       command=self.stop_macro_playback,
+                                       bg="#FF4444", fg="white", 
+                                       font=("Arial", 9, "bold"),
+                                       state=tk.DISABLED,
+                                       relief="raised",
+                                       bd=2)
+        self.stop_macro_btn.pack(side=tk.LEFT, padx=(10, 5))
+        
+        self.stop_loop_btn = ttk.Button(play_row, text="⏹ Stop Loop", command=self.stop_loop,
                   style="Normal.TButton", state=tk.DISABLED)
         self.stop_loop_btn.pack(side=tk.LEFT, padx=(0, 5))
         
-        ttk.Button(control_frame, text="Edit", command=self.edit_selected_macro,
+        # Second row: Management controls
+        mgmt_row = tk.Frame(control_frame, bg=BG_COLOR)
+        mgmt_row.pack(fill=tk.X)
+        
+        ttk.Button(mgmt_row, text="Edit", command=self.edit_selected_macro,
                   style="Normal.TButton").pack(side=tk.LEFT, padx=(0, 5))
         
-        ttk.Button(control_frame, text="Delete", command=self.delete_selected_macro,
-                  style="Normal.TButton").pack(side=tk.LEFT, padx=(0, 5))
+        # Smart button that changes based on state
+        self.smart_btn = ttk.Button(mgmt_row, text="Delete", command=self.smart_button_action,
+                  style="Normal.TButton")
+        self.smart_btn.pack(side=tk.LEFT, padx=(0, 5))
         
-        ttk.Button(control_frame, text="Settings", command=self.show_settings,
+        ttk.Button(mgmt_row, text="Settings", command=self.show_settings,
                   style="Normal.TButton").pack(side=tk.RIGHT)
         
         # Store current macros list
@@ -292,43 +336,41 @@ class OverlayWindow:
             self.macro_listbox.insert(tk.END, display_text)
     
     def play_selected_macro(self, event=None):
-        """Play the selected macro"""
+        """Play selected macro once"""
         selection = self.macro_listbox.curselection()
         if not selection:
-            messagebox.showwarning("No Selection", "Please select a macro to play!")
+            messagebox.showwarning("No Selection", "Please select a macro to play")
             return
         
         macro_info = self.current_macros[selection[0]]
-        success, macro_data = self.macro_manager.load_macro(macro_info['filepath'])
+        macro_data = self.macro_manager.load_macro(macro_info['filename'])
         
-        if not success:
-            messagebox.showerror("Error", f"Failed to load macro: {macro_data}")
+        if not macro_data:
+            messagebox.showerror("Error", "Failed to load macro")
             return
         
-        if not self.window_manager.is_game_running():
-            messagebox.showwarning("Game Not Found", "PokeMMO is not running!")
-            return
+        self.is_loop_running = True
+        self.stop_loop_btn.configure(state=tk.NORMAL)
+        self.stop_macro_btn.configure(state=tk.NORMAL)
         
-        # Start playback
         def playback_callback(event_type, data):
-            if event_type == 'playback_finished':
-                self.status_var.set("Playback finished")
+            if event_type == 'loop_start':
+                self.status_var.set(f"Playing macro: {macro_info['name']}")
+            elif event_type == 'loop_complete':
+                events_info = f" ({data['events_executed']} events, {data['events_failed']} failed)" if 'events_executed' in data else ""
+                self.status_var.set(f"✅ Macro completed{events_info}")
+            elif event_type == 'timeout':
+                self.status_var.set(f"⚠ Macro timed out after cycle {data['loop']}")
             elif event_type == 'error':
-                self.status_var.set(f"Playback error: {data}")
-            elif event_type == 'loop_completed':
-                self.current_loop_count = data
-                if self.max_loop_count > 1:
-                    self.status_var.set(f"Playing: {macro_info['name']} (Loop {data}/{self.max_loop_count})")
+                self.status_var.set(f"❌ Macro error: {data['error']}")
+            elif event_type == 'complete':
+                self.status_var.set("Playback finished")
+                self.is_loop_running = False
+                self.stop_loop_btn.configure(state=tk.DISABLED)
+                self.stop_macro_btn.configure(state=tk.DISABLED)
         
-        success = self.input_manager.play_macro(
-            macro_data['events'], 
-            callback=playback_callback
-        )
-        
-        if success:
-            self.status_var.set(f"Playing: {macro_info['name']}")
-        else:
-            messagebox.showwarning("Playback Error", "Cannot start playback - another macro is running!")
+        # Use higher timeout for complex macros (60 seconds)
+        self.input_manager.play_macro(macro_data['events'], speed=1.0, loop_count=1, callback=playback_callback, timeout=60)
     
     def edit_selected_macro(self):
         """Edit the selected macro"""
@@ -444,95 +486,81 @@ class OverlayWindow:
     def _toggle_infinite_loop(self):
         """Toggle infinite loop mode"""
         if self.infinite_loop_var.get():
-            # Store current value if it's not already infinite
-            current_val = self.loop_var.get()
-            if current_val != "∞":
-                try:
-                    # Store the numeric value for when unchecking
-                    self._stored_loop_count = int(current_val) if current_val.isdigit() else 1
-                except:
-                    self._stored_loop_count = 1
             self.loop_var.set("∞")
         else:
-            # Restore previous numeric value or default to 1
-            restore_val = getattr(self, '_stored_loop_count', 1)
-            self.loop_var.set(str(restore_val))
+            self.loop_var.set("1")
+    
+    def _toggle_mouse_recording(self):
+        """Toggle mouse movement recording in input manager"""
+        enabled = self.record_mouse_var.get()
+        self.input_manager.set_record_mouse_movements(enabled)
+        print(f"Mouse movement recording: {'enabled' if enabled else 'disabled'}")
     
     def play_selected_macro_loop(self):
-        """Play the selected macro with loop settings"""
+        """Play selected macro in loop mode"""
         selection = self.macro_listbox.curselection()
         if not selection:
-            messagebox.showwarning("No Selection", "Please select a macro to play!")
+            messagebox.showwarning("No Selection", "Please select a macro to play")
             return
         
         # Get loop count
         try:
-            if self.infinite_loop_var.get():
-                loop_count = -1  # Infinite
-                self.max_loop_count = -1
+            loop_count_str = self.loop_var.get()
+            if loop_count_str == "∞" or self.infinite_loop_var.get():
+                loop_count = 999999  # Effectively infinite
+                self.max_loop_count = 999999
             else:
-                loop_count = int(self.loop_var.get())
-                if loop_count < 1:
-                    loop_count = 1
+                loop_count = int(loop_count_str)
                 self.max_loop_count = loop_count
         except ValueError:
-            messagebox.showwarning("Invalid Input", "Please enter a valid number for loop count!")
+            messagebox.showerror("Invalid Input", "Please enter a valid number for loop count")
+            return
+        
+        if loop_count <= 0:
+            messagebox.showerror("Invalid Input", "Loop count must be positive")
             return
         
         macro_info = self.current_macros[selection[0]]
-        success, macro_data = self.macro_manager.load_macro(macro_info['filepath'])
+        macro_data = self.macro_manager.load_macro(macro_info['filename'])
         
-        if not success:
-            messagebox.showerror("Error", f"Failed to load macro: {macro_data}")
+        if not macro_data:
+            messagebox.showerror("Error", "Failed to load macro")
             return
         
-        if not self.window_manager.is_game_running():
-            messagebox.showwarning("Game Not Found", "PokeMMO is not running!")
-            return
+        self.is_loop_running = True
+        self.current_loop_count = 0
+        self.stop_loop_btn.configure(state=tk.NORMAL)
+        self.stop_macro_btn.configure(state=tk.NORMAL)
         
-        # Start playback with loop
         def playback_callback(event_type, data):
-            if event_type == 'playback_finished':
-                # Only update UI if loop is still considered running (i.e., not manually stopped)
-                if self.is_loop_running:
-                    self.is_loop_running = False
-                    self.loop_btn.configure(state=tk.NORMAL)
-                    self.stop_loop_btn.configure(state=tk.DISABLED)
-                    
-                    if loop_count == -1:
-                        self.status_var.set("Infinite loop stopped")
-                    else:
-                        self.status_var.set(f"Loop playback finished ({loop_count} times)")
+            if event_type == 'loop_start':
+                self.current_loop_count = data['loop']
+                if self.max_loop_count == 999999:
+                    self.status_var.set(f"Loop {data['loop']}: {macro_info['name']} (∞)")
+                else:
+                    self.status_var.set(f"Loop {data['loop']}/{data['total']}: {macro_info['name']}")
+            elif event_type == 'loop_complete':
+                events_info = f" ({data['events_executed']} events, {data['events_failed']} failed)" if 'events_executed' in data else ""
+                if self.max_loop_count == 999999:
+                    self.status_var.set(f"✅ Loop {data['loop']} completed{events_info} (∞)")
+                else:
+                    self.status_var.set(f"✅ Loop {data['loop']}/{data['total']} completed{events_info}")
+            elif event_type == 'timeout':
+                self.status_var.set(f"⚠ Macro timed out at loop {data['loop']}")
             elif event_type == 'error':
+                self.status_var.set(f"❌ Loop error: {data['error']}")
+            elif event_type == 'complete':
+                if data.get('success', True):
+                    self.status_var.set(f"🏁 All loops completed ({self.current_loop_count} total)")
+                else:
+                    self.status_var.set(f"🛑 Loop stopped by user ({self.current_loop_count} completed)")
                 self.is_loop_running = False
-                self.loop_btn.configure(state=tk.NORMAL)
                 self.stop_loop_btn.configure(state=tk.DISABLED)
-                self.status_var.set(f"Playback error: {data}")
-            elif event_type == 'loop_completed':
-                self.current_loop_count = data
-                if self.is_loop_running:  # Only update if still running
-                    if loop_count == -1:
-                        self.status_var.set(f"Playing: {macro_info['name']} (Loop {data})")
-                    else:
-                        self.status_var.set(f"Playing: {macro_info['name']} (Loop {data}/{loop_count})")
+                self.stop_macro_btn.configure(state=tk.DISABLED)
         
-        success = self.input_manager.play_macro(
-            macro_data['events'], 
-            callback=playback_callback,
-            loop_count=loop_count
-        )
-        
-        if success:
-            self.is_loop_running = True
-            self.loop_btn.configure(state=tk.DISABLED)
-            self.stop_loop_btn.configure(state=tk.NORMAL)
-            
-            if loop_count == -1:
-                self.status_var.set(f"Playing infinite loop: {macro_info['name']}")
-            else:
-                self.status_var.set(f"Playing {loop_count}x: {macro_info['name']}")
-        else:
-            messagebox.showwarning("Playback Error", "Cannot start playback - another macro is running!")
+        # Use much higher timeout for looped macros (120 seconds per loop)
+        total_timeout = min(120 * loop_count, 3600)  # Max 1 hour total
+        self.input_manager.play_macro(macro_data['events'], speed=1.0, loop_count=loop_count, callback=playback_callback, timeout=total_timeout)
     
     def on_window_event(self, event_type, data):
         """Handle window manager events"""
@@ -588,13 +616,59 @@ class OverlayWindow:
             self.stop_loop_btn.configure(state=tk.DISABLED)
             self.status_var.set("Loop stopped by user")
     
-
-    
     def hotkey_stop_loop(self):
         """Stop loop via hotkey"""
         if self.is_loop_running:
             self.stop_loop()
             self.status_var.set("Loop stopped via hotkey")
+    
+    def stop_macro_playback(self):
+        """Stop macro playback"""
+        if self.input_manager.is_playing:
+            self.input_manager.stop_macro()
+            if hasattr(self, 'stop_macro_btn'):
+                self.stop_macro_btn.configure(state=tk.DISABLED)
+            
+            # Reset smart button to DELETE
+            self.smart_btn.configure(text="Delete", style="Normal.TButton")
+            
+            # Also handle loop state if it was a loop
+            if hasattr(self, 'is_loop_running') and self.is_loop_running:
+                self.is_loop_running = False
+                self.loop_btn.configure(state=tk.NORMAL)
+                self.stop_loop_btn.configure(state=tk.DISABLED)
+            
+            self.status_var.set("Macro playback stopped")
+    
+    def smart_button_action(self):
+        """Smart button that acts as Stop when macro is playing, Delete otherwise"""
+        if self.input_manager.is_playing:
+            # Act as STOP button
+            self.stop_macro_playback()
+        else:
+            # Act as DELETE button
+            self.delete_selected_macro()
+    
+    def emergency_stop(self, event=None):
+        """Emergency stop via P key"""
+        print("P key pressed - emergency stop!")
+        if self.input_manager.is_playing:
+            self.input_manager.stop_macro()
+            
+            # Reset all button states
+            if hasattr(self, 'stop_macro_btn'):
+                self.stop_macro_btn.configure(state=tk.DISABLED)
+            
+            # Handle loop state
+            if hasattr(self, 'is_loop_running') and self.is_loop_running:
+                self.is_loop_running = False
+                self.loop_btn.configure(state=tk.NORMAL)
+                self.stop_loop_btn.configure(state=tk.DISABLED)
+            
+            self.status_var.set("❌ EMERGENCY STOP - Macro stopped via P key")
+            return "break"  # Prevent event from propagating
+        
+        return None
     
     def destroy(self):
         """Clean up and close"""

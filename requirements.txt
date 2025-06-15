@@ -1,2 +1,5 @@
 pywin32>=307
-pillow>=10.0.0 
+opencv-python
+pillow>=10.0.0
+numpy
+pytesseract 
