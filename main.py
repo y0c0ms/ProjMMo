@@ -1109,6 +1109,18 @@ class PokeMMOOverlay:
     
     def create_sweet_scent_tab(self):
         """Create the Sweet Scent tab content with scrolling"""
+        # Initialize configuration variables first
+        self.use_e_plus_e_var = tk.BooleanVar(value=False)
+        self.heal_delay_var = tk.StringVar(value="2.0")
+        self.cycle_pause_var = tk.StringVar(value="1.0")
+        self.initial_focus_delay_var = tk.StringVar(value="2.0")
+        self.post_e_delay_var = tk.StringVar(value="1.0")
+        self.debug_pokecenter_var = tk.BooleanVar(value=False)
+        self.debug_s_duration_var = tk.StringVar(value="2.0")
+        self.debug_e_duration_var = tk.StringVar(value="3.0")
+        self.debug_e_interval_var = tk.StringVar(value="0.2")
+        self.debug_check_interval_var = tk.StringVar(value="60.0")
+        
         # Create scrollable frame
         main_frame = tk.Frame(self.sweet_scent_frame, bg='#1e1e1e')
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -1301,17 +1313,69 @@ class PokeMMOOverlay:
         tk.Entry(loop_interval_frame, textvariable=self.loop_interval_var, font=('Segoe UI', 9),
                 bg='#ffffff', fg='#000000', width=8).pack(side=tk.RIGHT)
         
-        # Other configuration variables
-        self.heal_delay_var = tk.StringVar(value="2.0")
-        self.cycle_pause_var = tk.StringVar(value="1.0")
-        self.initial_focus_delay_var = tk.StringVar(value="2.0")
-        self.post_e_delay_var = tk.StringVar(value="1.0")
-        self.use_e_plus_e_var = tk.BooleanVar(value=False)
-        self.debug_pokecenter_var = tk.BooleanVar(value=False)
-        self.debug_s_duration_var = tk.StringVar(value="2.0")
-        self.debug_e_duration_var = tk.StringVar(value="3.0")
-        self.debug_e_interval_var = tk.StringVar(value="0.2")
-        self.debug_check_interval_var = tk.StringVar(value="60.0")
+        # Loop type selection
+        loop_type_frame = tk.Frame(config_inner, bg='#2a2a2a')
+        loop_type_frame.pack(fill=tk.X, pady=(4, 8))
+        
+        tk.Checkbutton(loop_type_frame, text="Use E+E Loop (instead of X E presses)",
+                      variable=self.use_e_plus_e_var,
+                      command=self.update_sweet_scent_config,
+                      font=('Segoe UI', 9),
+                      fg='#ffffff', bg='#2a2a2a',
+                      selectcolor='#2a2a2a',
+                      activeforeground='#ffffff', activebackground='#2a2a2a',
+                      borderwidth=0).pack(side=tk.LEFT)
+        
+        # Advanced timing configuration section
+        advanced_frame = tk.Frame(scent_container, bg='#2a2a2a', relief=tk.RAISED, bd=1)
+        advanced_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        tk.Label(advanced_frame, text="⏱️ Advanced Timing Configuration", 
+                font=('Segoe UI', 10, 'bold'), 
+                fg='#ffffff', bg='#2a2a2a').pack(pady=(6, 6))
+        
+        advanced_inner = tk.Frame(advanced_frame, bg='#2a2a2a')
+        advanced_inner.pack(fill=tk.X, padx=10, pady=(0, 8))
+        
+        # Heal delay
+        heal_delay_frame = tk.Frame(advanced_inner, bg='#2a2a2a')
+        heal_delay_frame.pack(fill=tk.X, pady=(0, 4))
+        
+        tk.Label(heal_delay_frame, text="Heal Animation Delay (s):", font=('Segoe UI', 9), 
+                fg='#ffffff', bg='#2a2a2a').pack(side=tk.LEFT)
+        
+        tk.Entry(heal_delay_frame, textvariable=self.heal_delay_var, font=('Segoe UI', 9),
+                bg='#ffffff', fg='#000000', width=8).pack(side=tk.RIGHT)
+        
+        # Cycle pause
+        cycle_pause_frame = tk.Frame(advanced_inner, bg='#2a2a2a')
+        cycle_pause_frame.pack(fill=tk.X, pady=(0, 4))
+        
+        tk.Label(cycle_pause_frame, text="Cycle Pause Delay (s):", font=('Segoe UI', 9), 
+                fg='#ffffff', bg='#2a2a2a').pack(side=tk.LEFT)
+        
+        tk.Entry(cycle_pause_frame, textvariable=self.cycle_pause_var, font=('Segoe UI', 9),
+                bg='#ffffff', fg='#000000', width=8).pack(side=tk.RIGHT)
+        
+        # Initial focus delay
+        focus_delay_frame = tk.Frame(advanced_inner, bg='#2a2a2a')
+        focus_delay_frame.pack(fill=tk.X, pady=(0, 4))
+        
+        tk.Label(focus_delay_frame, text="Initial Focus Delay (s):", font=('Segoe UI', 9), 
+                fg='#ffffff', bg='#2a2a2a').pack(side=tk.LEFT)
+        
+        tk.Entry(focus_delay_frame, textvariable=self.initial_focus_delay_var, font=('Segoe UI', 9),
+                bg='#ffffff', fg='#000000', width=8).pack(side=tk.RIGHT)
+        
+        # Post E delay
+        post_e_delay_frame = tk.Frame(advanced_inner, bg='#2a2a2a')
+        post_e_delay_frame.pack(fill=tk.X, pady=(0, 4))
+        
+        tk.Label(post_e_delay_frame, text="Post E Press Delay (s):", font=('Segoe UI', 9), 
+                fg='#ffffff', bg='#2a2a2a').pack(side=tk.LEFT)
+        
+        tk.Entry(post_e_delay_frame, textvariable=self.post_e_delay_var, font=('Segoe UI', 9),
+                bg='#ffffff', fg='#000000', width=8).pack(side=tk.RIGHT)
         
         # Debug/Pokecenter section
         debug_frame = tk.Frame(scent_container, bg='#2a2a2a', relief=tk.RAISED, bd=1)
@@ -1738,7 +1802,7 @@ class PokeMMOOverlay:
     def save_macro(self):
         """Save the recorded macro"""
         name = self.macro_name_entry.get().strip()
-        category = self.category_combo.get()
+        category = self.category_dropdown.get()
         
         if not name:
             messagebox.showerror("Error", "Please enter a macro name!")

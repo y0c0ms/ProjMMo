@@ -3,12 +3,17 @@
   "sweet_scent_animation_delay": 12.3,
   "initial_e_presses": 5,
   "initial_e_interval": 0.2,
-  "post_e_delay": 8.5,
-  "encounter_loop_duration": 14.0,
-  "encounter_loop_interval": 0.2,
+  "post_e_delay": 9.0,
+  "encounter_loop_duration": 15.0,
+  "encounter_loop_interval": 0.3,
   "heal_delay": 4.0,
   "cycle_pause": 1.0,
   "initial_focus_delay": 2.0,
   "use_e_plus_e": true,
-  "selected_macro": "SpAtFortreehoenn"
+  "selected_macro": "SpAtFortreehoenn",
+  "debug_pokecenter_enabled": false,
+  "debug_s_key_duration": 2.0,
+  "debug_e_key_duration": 3.0,
+  "debug_e_key_interval": 0.2,
+  "debug_check_interval": 60.0
 }
