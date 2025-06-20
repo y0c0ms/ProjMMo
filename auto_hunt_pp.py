@@ -15,15 +15,21 @@ from typing import Dict, Any, Optional, Callable
 class PPAutoHuntEngine:
     """Engine for automating hunting with PP management"""
     
-    def __init__(self, window_manager, input_manager, macro_manager, template_manager):
+    def __init__(self, window_manager, input_manager, macro_manager, template_manager, auto_hunt_engine=None):
         self.window_manager = window_manager
         self.input_manager = input_manager
         self.macro_manager = macro_manager
         self.template_manager = template_manager
         
-        # Create an AutoHuntEngine instance for battle detection
-        from auto_hunt import AutoHuntEngine
-        self.auto_hunt_engine = AutoHuntEngine(window_manager, input_manager)
+        # Use shared AutoHuntEngine instance if provided, otherwise create new one
+        if auto_hunt_engine is not None:
+            self.auto_hunt_engine = auto_hunt_engine
+            print("✅ PP Hunt: Using shared AutoHuntEngine instance (custom detection area will be preserved)")
+        else:
+            # Create an AutoHuntEngine instance for battle detection (fallback)
+            from auto_hunt import AutoHuntEngine
+            self.auto_hunt_engine = AutoHuntEngine(window_manager, input_manager)
+            print("⚠️ PP Hunt: Created new AutoHuntEngine instance (custom detection area may not be shared)")
         
         # Hunt state
         self.is_hunting = False
@@ -50,7 +56,7 @@ class PPAutoHuntEngine:
         self.encounter_loop_interval = 0.3  # Interval between key combinations in loop
         
         # Healing configuration
-        self.heal_key = '7'
+        self.heal_key = 'q'  # Default to Q key for teleport/heal
         self.heal_delay = 3.0  # Wait time after pressing heal key
         
         # Statistics
@@ -124,9 +130,25 @@ class PPAutoHuntEngine:
         
         # Load and play the macro
         try:
-            success, macro_data = self.macro_manager.load_macro(self.selected_macro)
+            # Find the full filepath for the selected macro
+            macro_filepath = None
+            available_macros = self.get_available_macros()
+            
+            for macro in available_macros:
+                if macro['name'] == self.selected_macro:
+                    macro_filepath = macro['filepath']
+                    break
+            
+            if not macro_filepath:
+                print(f"❌ Macro not found: {self.selected_macro}")
+                print(f"🔍 Available macros: {[m['name'] for m in available_macros] if available_macros else 'None'}")
+                return False
+            
+            print(f"📂 Loading macro from: {macro_filepath}")
+            success, macro_data = self.macro_manager.load_macro(macro_filepath)
             if not success:
-                print(f"❌ Failed to load macro: {self.selected_macro}")
+                print(f"❌ Failed to load macro file: {macro_filepath}")
+                print(f"❌ Error details: {macro_data}")
                 return False
             
             macro_events = macro_data.get('events', [])
@@ -172,16 +194,41 @@ class PPAutoHuntEngine:
         """Perform A to D movement until battle menu is detected"""
         print(f"🚶 Starting movement cycle (A→D pattern, {self.key_hold_duration}s hold duration)")
         
+        # Ensure templates are loaded before starting movement
+        if not self.auto_hunt_engine.templates:
+            print("⚠️ PP Hunt: No templates loaded, attempting to load them...")
+            self.auto_hunt_engine.load_templates()
+            if not self.auto_hunt_engine.templates:
+                print("❌ PP Hunt: Still no templates loaded! Battle detection may not work.")
+                print("💡 Use 'Load Templates' button or add PNG files to templates/ folder")
+            else:
+                print(f"✅ PP Hunt: Loaded {len(self.auto_hunt_engine.templates)} templates")
+        else:
+            print(f"✅ PP Hunt: {len(self.auto_hunt_engine.templates)} templates already loaded")
+        
         # Clean up any leftover screenshots from previous cycles
         self.auto_hunt_engine.cleanup_encounter_screenshots()
         
         movement_index = 0
         cycle_count = 0
+        last_ocr_time = 0
         
-        while not self.stop_flag and not self.is_paused:
-            # Check for beforeMenu template first
+        while not self.stop_flag and not self.is_paused and self.is_hunting:
+            # Check for beforeMenu template first and perform OCR analysis
             screenshot = self.auto_hunt_engine.capture_full_game_screen()
             if screenshot is not None:
+                
+                # Perform OCR analysis based on frequency setting (reduced logging)
+                current_time = time.time()
+                if current_time - last_ocr_time >= self.auto_hunt_engine.ocr_screenshot_interval:
+                    # Run Pokemon name detection to check for special encounters (quick check, 2 retries max)
+                    pokemon_names, is_horde, contains_shiny = self.auto_hunt_engine.detect_pokemon_names_top_screen(screenshot, max_retries=2)
+                    
+                    if pokemon_names and (contains_shiny or is_horde):
+                        print(f"🌟 Special encounter detected during movement! Shiny: {contains_shiny}, Horde: {is_horde}")
+                        # Don't stop movement here - let the battle detection handle it properly
+                    
+                    last_ocr_time = current_time
                 # Check for beforeMenu template
                 beforemenu_detected, _ = self.auto_hunt_engine.detect_template(screenshot, "beforeMenu")
                 if beforemenu_detected:
@@ -191,20 +238,44 @@ class PPAutoHuntEngine:
                     
                     # Now check for actual battle menu
                     screenshot = self.auto_hunt_engine.capture_full_game_screen()
-                    if screenshot is not None and self.auto_hunt_engine.detect_battle_menu(screenshot):
-                        print("⚔️ Battle menu confirmed after beforeMenu detection!")
-                        return True
+                    if screenshot is not None:
+                        # Save debug screenshot during hunt for comparison with test button
+                        self.auto_hunt_engine.save_debug_screenshot(screenshot, "pp_hunt_battle_check")
+                        print("🔍 PP Hunt: Saved debug screenshot for battle menu analysis")
+                        
+                        if self.auto_hunt_engine.detect_battle_menu(screenshot):
+                            print("⚔️ Battle menu confirmed after beforeMenu detection!")
+                            return True
+                        else:
+                            print("⚠️ No battle menu found after beforeMenu - continuing movement")
+                            print(f"🔍 PP Hunt: Templates loaded: {len(self.auto_hunt_engine.templates)}")
+                            if self.auto_hunt_engine.templates:
+                                print(f"🔍 PP Hunt: Available templates: {list(self.auto_hunt_engine.templates.keys())}")
                     else:
-                        print("⚠️ No battle menu found after beforeMenu - continuing movement")
+                        print("❌ PP Hunt: Could not capture screenshot after beforeMenu")
                 
                 # Regular battle menu detection (fallback)
+                # Save debug screenshot for regular detection too
+                self.auto_hunt_engine.save_debug_screenshot(screenshot, "pp_hunt_regular_check")
+                
                 if self.auto_hunt_engine.detect_battle_menu(screenshot):
                     print("⚔️ Battle menu detected directly! Stopping movement")
                     return True
+                else:
+                    # Every 20 cycles, provide detailed debug info
+                    if cycle_count % 20 == 0:
+                        print(f"🔍 PP Hunt Debug (cycle {cycle_count}):")
+                        print(f"   Screenshot captured: {screenshot.shape if screenshot is not None else 'None'}")
+                        print(f"   Templates loaded: {len(self.auto_hunt_engine.templates)}")
+                        if self.auto_hunt_engine.templates:
+                            print(f"   Template names: {list(self.auto_hunt_engine.templates.keys())}")
+                        else:
+                            print("   ⚠️ No templates loaded! This might be the issue.")
+            else:
+                print("❌ PP Hunt: Could not capture screenshot during movement cycle")
             
             # Press and hold current movement key for specified duration
             current_key = self.movement_keys[movement_index]
-            print(f"🎮 Holding {current_key.upper()} key for {self.key_hold_duration}s")
             
             # Press key
             self.input_manager.press_key(current_key)
@@ -217,7 +288,6 @@ class PPAutoHuntEngine:
             
             # Release key
             self.input_manager.release_key(current_key)
-            print(f"✓ Released {current_key.upper()} key")
             
             # Check for beforeMenu and battle menu after movement
             screenshot = self.auto_hunt_engine.capture_full_game_screen()
@@ -231,11 +301,18 @@ class PPAutoHuntEngine:
                     
                     # Now check for actual battle menu
                     screenshot = self.auto_hunt_engine.capture_full_game_screen()
-                    if screenshot is not None and self.auto_hunt_engine.detect_battle_menu(screenshot):
-                        print("⚔️ Battle menu confirmed after post-movement beforeMenu detection!")
-                        return True
+                    if screenshot is not None:
+                        # Save debug screenshot for post-movement analysis
+                        self.auto_hunt_engine.save_debug_screenshot(screenshot, "pp_hunt_post_movement")
+                        print("🔍 PP Hunt: Saved post-movement debug screenshot")
+                        
+                        if self.auto_hunt_engine.detect_battle_menu(screenshot):
+                            print("⚔️ Battle menu confirmed after post-movement beforeMenu detection!")
+                            return True
+                        else:
+                            print("⚠️ No battle menu found after post-movement beforeMenu - continuing")
                     else:
-                        print("⚠️ No battle menu found after post-movement beforeMenu - continuing")
+                        print("❌ PP Hunt: Could not capture screenshot after post-movement beforeMenu")
                 
                 # Regular battle menu detection (fallback)
                 if self.auto_hunt_engine.detect_battle_menu(screenshot):
@@ -258,12 +335,42 @@ class PPAutoHuntEngine:
     
     def perform_battle_sequence(self) -> bool:
         """Perform Sweet Scent-style battle sequence with initial E presses + loop"""
-        print("⚔️ Starting battle sequence")
+        print("⚔️ Starting battle sequence with Pokemon analysis")
+        
+        # First, analyze the encounter for Pokemon names and special detection
+        screenshot = self.auto_hunt_engine.capture_full_game_screen()
+        if screenshot is not None:
+            should_continue, encounter_type = self.auto_hunt_engine.analyze_encounter_for_pokemon(screenshot)
+            
+            if not should_continue:
+                print(f"🛑 {encounter_type.upper()} encounter detected - pausing PP hunt!")
+                self.pause_hunt()
+                return False
+            
+            # Handle horde encounters with D-S-E sequence
+            if encounter_type == "horde":
+                print("🎯 Horde detected - executing D-S-E sequence instead of normal battle")
+                self.auto_hunt_engine.execute_horde_sequence()
+                
+                # Wait 7 seconds after horde sequence
+                print("⏳ Waiting 7 seconds after horde sequence...")
+                if not self.interruptible_sleep(7.0):
+                    return False
+                
+                # Skip normal battle sequence for hordes
+                print("✅ Horde encounter completed")
+                self.auto_hunt_engine.cleanup_encounter_screenshots()
+                self.encounters_found += 1
+                self.current_encounters += 1
+                return True
+        
+        # Continue with normal battle sequence for regular encounters
+        print("⚔️ Normal encounter - proceeding with standard battle sequence")
         
         # Phase 1: Initial E presses
         print(f"🎮 Pressing E {self.initial_e_presses} times (interval: {self.battle_key_interval}s)")
         for i in range(self.initial_e_presses):
-            if self.stop_flag or self.is_paused:
+            if self.stop_flag or self.is_paused or not self.is_hunting:
                 return False
             
             print(f"🎮 Pressing E key ({i+1}/{self.initial_e_presses})")
@@ -285,7 +392,7 @@ class PPAutoHuntEngine:
         loop_start_time = time.time()
         loop_cycles = 0
         
-        while not self.stop_flag and not self.is_paused:
+        while not self.stop_flag and not self.is_paused and self.is_hunting:
             elapsed_time = time.time() - loop_start_time
             remaining_time = self.encounter_loop_duration - elapsed_time
             
@@ -622,6 +729,15 @@ class PPAutoHuntEngine:
         if 'heal_delay' in config:
             self.heal_delay = max(0.5, min(60.0, config['heal_delay']))
         
+        if 'heal_key' in config:
+            if isinstance(config['heal_key'], str) and len(config['heal_key']) == 1:
+                self.heal_key = config['heal_key'].lower()
+        
+        if 'ocr_frequency' in config:
+            ocr_freq = max(0.1, min(5.0, config['ocr_frequency']))
+            self.auto_hunt_engine.ocr_screenshot_interval = ocr_freq
+            print(f"🔍 OCR frequency updated to: {ocr_freq}s")
+        
         print("✅ PP Auto Hunt configuration updated")
     
     def ensure_presets_directory(self):
@@ -646,6 +762,8 @@ class PPAutoHuntEngine:
                 'encounter_loop_type': self.encounter_loop_type,
                 'encounter_loop_interval': self.encounter_loop_interval,
                 'heal_delay': self.heal_delay,
+                'heal_key': self.heal_key,
+                'ocr_frequency': self.auto_hunt_engine.ocr_screenshot_interval,
                 'selected_macro': self.selected_macro
             }
             

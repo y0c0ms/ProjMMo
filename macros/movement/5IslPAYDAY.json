@@ -1,0 +1,171 @@
+{
+  "name": "5IslPAYDAY",
+  "description": "",
+  "category": "Movement",
+  "hotkey": "",
+  "created_date": "2025-06-20T00:57:05.416244",
+  "duration": 10.02,
+  "event_count": 24,
+  "events": [
+    {
+      "timestamp": 0.4125630855560303,
+      "type": "mouse_click",
+      "x": 1292,
+      "y": 303,
+      "screen_x": 1292,
+      "screen_y": 303,
+      "button": "left",
+      "pressed": true
+    },
+    {
+      "timestamp": 0.4964935779571533,
+      "type": "mouse_click",
+      "x": 1292,
+      "y": 303,
+      "screen_x": 1292,
+      "screen_y": 303,
+      "button": "left",
+      "pressed": false
+    },
+    {
+      "timestamp": 0.922940731048584,
+      "type": "key_press",
+      "key": "e",
+      "pressed": true
+    },
+    {
+      "timestamp": 1.0267162322998047,
+      "type": "key_release",
+      "key": "e",
+      "pressed": false
+    },
+    {
+      "timestamp": 2.2682552337646484,
+      "type": "key_press",
+      "key": "e",
+      "pressed": true
+    },
+    {
+      "timestamp": 2.392282009124756,
+      "type": "key_release",
+      "key": "e",
+      "pressed": false
+    },
+    {
+      "timestamp": 3.4577155113220215,
+      "type": "key_press",
+      "key": "e",
+      "pressed": true
+    },
+    {
+      "timestamp": 3.571737051010132,
+      "type": "key_release",
+      "key": "e",
+      "pressed": false
+    },
+    {
+      "timestamp": 4.540577411651611,
+      "type": "key_press",
+      "key": "e",
+      "pressed": true
+    },
+    {
+      "timestamp": 4.63437294960022,
+      "type": "key_release",
+      "key": "e",
+      "pressed": false
+    },
+    {
+      "timestamp": 4.882863759994507,
+      "type": "key_press",
+      "key": "s",
+      "pressed": true
+    },
+    {
+      "timestamp": 6.032674789428711,
+      "type": "key_release",
+      "key": "s",
+      "pressed": false
+    },
+    {
+      "timestamp": 7.038603067398071,
+      "type": "key_press",
+      "key": "z",
+      "pressed": true
+    },
+    {
+      "timestamp": 7.153383016586304,
+      "type": "key_release",
+      "key": "z",
+      "pressed": false
+    },
+    {
+      "timestamp": 7.463149547576904,
+      "type": "key_press",
+      "key": "a",
+      "pressed": true
+    },
+    {
+      "timestamp": 7.9518067836761475,
+      "type": "key_press",
+      "key": "s",
+      "pressed": true
+    },
+    {
+      "timestamp": 7.972807168960571,
+      "type": "key_release",
+      "key": "a",
+      "pressed": false
+    },
+    {
+      "timestamp": 8.314828157424927,
+      "type": "key_press",
+      "key": "d",
+      "pressed": true
+    },
+    {
+      "timestamp": 8.314998865127563,
+      "type": "key_release",
+      "key": "s",
+      "pressed": false
+    },
+    {
+      "timestamp": 9.3818199634552,
+      "type": "key_press",
+      "key": "w",
+      "pressed": true
+    },
+    {
+      "timestamp": 9.40274953842163,
+      "type": "key_release",
+      "key": "d",
+      "pressed": false
+    },
+    {
+      "timestamp": 9.785104036331177,
+      "type": "key_release",
+      "key": "w",
+      "pressed": false
+    },
+    {
+      "timestamp": 10.355231523513794,
+      "type": "mouse_click",
+      "x": 1607,
+      "y": 289,
+      "screen_x": 1607,
+      "screen_y": 289,
+      "button": "left",
+      "pressed": true
+    },
+    {
+      "timestamp": 10.428444385528564,
+      "type": "mouse_click",
+      "x": 1607,
+      "y": 289,
+      "screen_x": 1607,
+      "screen_y": 289,
+      "button": "left",
+      "pressed": false
+    }
+  ]
+}

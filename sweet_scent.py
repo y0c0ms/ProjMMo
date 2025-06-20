@@ -15,10 +15,20 @@ from typing import Dict, Any, Optional, Callable
 class SweetScentEngine:
     """Engine for automating Sweet Scent encounters with PP management"""
     
-    def __init__(self, window_manager, input_manager, macro_manager):
+    def __init__(self, window_manager, input_manager, macro_manager, auto_hunt_engine=None):
         self.window_manager = window_manager
         self.input_manager = input_manager
         self.macro_manager = macro_manager
+        
+        # Use shared AutoHuntEngine instance if provided
+        if auto_hunt_engine is not None:
+            self.auto_hunt_engine = auto_hunt_engine
+            print("✅ Sweet Scent: Using shared AutoHuntEngine instance (custom detection area and OCR frequency preserved)")
+        else:
+            # Create AutoHuntEngine instance for Pokemon detection (fallback)
+            from auto_hunt import AutoHuntEngine
+            self.auto_hunt_engine = AutoHuntEngine(window_manager, input_manager)
+            print("⚠️ Sweet Scent: Created new AutoHuntEngine instance (custom settings may not be shared)")
         
         # Sweet Scent state
         self.is_hunting = False

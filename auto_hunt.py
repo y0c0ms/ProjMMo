@@ -12,6 +12,8 @@ import win32gui
 import win32con
 import win32api
 from typing import Tuple, Optional, List, Dict, Any
+from datetime import datetime
+import pytesseract
 
 class AutoHuntEngine:
     """Main engine for automated Pokemon hunting with screen recognition"""
@@ -29,6 +31,7 @@ class AutoHuntEngine:
         # Screen recognition settings
         self.template_threshold = 0.8  # Confidence threshold for template matching
         self.screenshot_interval = 0.5  # How often to check screen (seconds)
+        self.ocr_screenshot_interval = 0.5  # How often to take OCR screenshots (seconds)
         
         # Movement settings
         self.movement_duration = 0.5  # How long to hold movement keys
@@ -46,11 +49,27 @@ class AutoHuntEngine:
         # Callbacks
         self.status_callback = None
         self.encounter_callback = None
+        self.special_encounter_callback = None  # New callback for special encounters
         
         # Screenshot saving
         self.screenshot_counter = 0
         self.current_encounter_screenshots = []  # Track screenshots for current encounter
+        self.debug_dir = "debug_screenshots"
         self.ensure_screenshot_directory()
+        
+        # Setup Tesseract path for OCR
+        self._setup_tesseract()
+        
+        # Pokemon name detection and special encounter system
+        self.normal_pokemon_list = [
+            'sentret', 'pidgey', 'pidgeotto', 'hoppip', 'meowth', 
+            'persian', 'psyduck','furret', 'slowpoke'
+        ]
+        self.special_encounters_found = 0
+        self.shiny_encounters_found = 0
+        self.horde_encounters_found = 0
+        self.last_detected_pokemon = ""
+        self.last_encounter_type = "normal"  # normal, special, shiny, horde
     
     def ensure_screenshot_directory(self):
         """Create screenshots directory if it doesn't exist"""
@@ -59,6 +78,20 @@ class AutoHuntEngine:
         if not os.path.exists(self.screenshot_dir):
             os.makedirs(self.screenshot_dir)
             print(f"✓ Created debug screenshots directory: {self.screenshot_dir}")
+    
+    def _setup_tesseract(self):
+        """Setup Tesseract OCR path for Windows"""
+        import os
+        possible_paths = [
+            r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+            r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+            r'C:\Users\{}\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'.format(os.getenv('USERNAME', '')),
+        ]
+        
+        for path in possible_paths:
+            if os.path.exists(path):
+                pytesseract.pytesseract.tesseract_cmd = path
+                break
     
     def save_debug_screenshot(self, screenshot: np.ndarray, prefix: str = "debug") -> str:
         """Save screenshot for debugging purposes"""
@@ -86,10 +119,30 @@ class AutoHuntEngine:
             return ""
     
     def cleanup_encounter_screenshots(self):
-        """Delete all screenshots from the current encounter"""
+        """Delete all debug screenshots to keep folder clean"""
         import os
+        import glob
         
         deleted_count = 0
+        
+        # Delete all debug screenshots, not just current encounter ones
+        patterns = [
+            "debug_screenshots/battle_menu_test_*.png",
+            "debug_screenshots/template_*.png", 
+            "debug_screenshots/pp_hunt_*.png",
+            "debug_screenshots/pokemon_names_*.png"
+        ]
+        
+        for pattern in patterns:
+            for filepath in glob.glob(pattern):
+                try:
+                    if os.path.exists(filepath):
+                        os.remove(filepath)
+                        deleted_count += 1
+                except Exception as e:
+                    print(f"⚠ Could not delete {filepath}: {e}")
+        
+        # Also delete from current encounter list
         for filepath in self.current_encounter_screenshots:
             try:
                 if os.path.exists(filepath):
@@ -99,7 +152,7 @@ class AutoHuntEngine:
                 print(f"⚠ Could not delete {filepath}: {e}")
         
         if deleted_count > 0:
-            print(f"🗑️ Cleaned up {deleted_count} encounter screenshots")
+            print(f"🗑️ Cleaned up {deleted_count} debug screenshots")
         
         # Clear the list for next encounter
         self.current_encounter_screenshots = []
@@ -1286,7 +1339,7 @@ class AutoHuntEngine:
         print()
     
     def handle_encounter(self, screenshot: np.ndarray):
-        """Handle a detected encounter"""
+        """Handle a detected encounter with improved logic and Pokemon analysis"""
         self.encounters_found += 1
         
         if self.encounter_callback:
@@ -1295,65 +1348,87 @@ class AutoHuntEngine:
                 'time': time.time() - self.hunt_start_time if self.hunt_start_time else 0
             })
         
-        print("🏃 Running from encounter - pressing E multiple times until battle ends")
+        print("🏃 Analyzing encounter and determining action...")
         
         # Wait a moment for the battle interface to appear
         time.sleep(1.5)
         
-        # Press E 5 times with random delays, then keep checking if battle is still active
-        import random
-        
-        max_attempts = 20  # Safety limit to prevent infinite loop
-        attempt = 0
-        
-        while attempt < max_attempts:
-            # Press E 5 times with random delays
-            for i in range(5):
-                # Random delay between 0.5 and 0.7 seconds
-                delay = 0.5 + random.uniform(0, 0.2)
+        # Capture current screenshot for analysis
+        current_screenshot = self.capture_full_game_screen()
+        if current_screenshot is not None:
+            # Save debug screenshot of the battle menu for analysis
+            self.save_debug_screenshot(current_screenshot, "battle_menu_analysis")
+            
+            # Verify battle menu is present using template matching
+            battle_menu_detected = self.detect_battle_menu(current_screenshot)
+            
+            if battle_menu_detected:
+                print("✅ Battle menu confirmed via image analysis")
                 
-                print(f"   Pressing E (attempt {attempt + 1}, press {i + 1}/5) - delay: {delay:.2f}s")
+                # NEW: Analyze the encounter for Pokemon names and special detection
+                should_continue, encounter_type = self.analyze_encounter_for_pokemon(current_screenshot)
                 
-                # Use the same input method as macros to press E
+                if not should_continue:
+                    print(f"🛑 {encounter_type.upper()} encounter detected - pausing hunt!")
+                    self.pause_hunt()
+                    return  # Don't continue with any escape sequence
+                
+                # Handle different encounter types
+                if encounter_type == "horde":
+                    print("🎯 Executing horde-specific sequence (D-S-E)")
+                    self.execute_horde_sequence()
+                    
+                    # Wait 3 seconds after horde sequence
+                    print("⏳ Waiting 3 seconds after horde sequence...")
+                    time.sleep(3.0)
+                    
+                else:
+                    # Normal encounter - use standard E sequence
+                    print("🎯 Normal encounter - pressing E exactly 3 times...")
+                    for i in range(3):
+                        print(f"   Pressing E ({i + 1}/3)")
+                        
+                        # Use the same input method as macros to press E
+                        self.input_manager.press_key('e')
+                        time.sleep(0.1)
+                        self.input_manager.release_key('e')
+                        
+                        # Short delay between E presses
+                        time.sleep(0.5)
+                    
+                    print("✅ Finished pressing E 3 times")
+                    
+                    # Wait exactly 7 seconds before allowing movement again
+                    print("⏳ Waiting 7 seconds before resuming movement...")
+                    time.sleep(7.0)
+                
+            else:
+                print("⚠ Battle menu not clearly detected, proceeding with standard escape")
+                # Fallback to standard sequence if battle menu not detected
+                for i in range(3):
+                    self.input_manager.press_key('e')
+                    time.sleep(0.1)
+                    self.input_manager.release_key('e')
+                    time.sleep(0.5)
+                time.sleep(7.0)
+        else:
+            print("⚠ Could not capture screenshot, proceeding with standard escape")
+            # Fallback sequence
+            for i in range(3):
                 self.input_manager.press_key('e')
                 time.sleep(0.1)
                 self.input_manager.release_key('e')
-                
-                # Wait with random delay
-                time.sleep(delay)
-            
-            attempt += 1
-            
-            # Check if we're still in battle by taking a screenshot and detecting battle menu
-            print(f"🔍 Checking if battle ended (attempt {attempt})...")
-            time.sleep(1.0)  # Wait for screen to update
-            
-            current_screenshot = self.capture_full_game_screen()
-            if current_screenshot is not None:
-                # Don't save debug screenshots during battle escape (too many files)
-                still_in_battle = self.detect_battle_menu_quick(current_screenshot)
-                
-                if not still_in_battle:
-                    print("✅ Battle ended! Returning to movement...")
-                    break
-                else:
-                    print(f"⚔️ Still in battle, continuing to press E...")
-            else:
-                print("⚠ Could not capture screenshot, assuming battle ended")
-                break
-        
-        if attempt >= max_attempts:
-            print("⚠ Reached maximum escape attempts, continuing hunt...")
+                time.sleep(0.5)
+            time.sleep(7.0)
         
         # Reset movement direction to 'a' after encounter
         self.current_direction = 'a'
         print("🔄 Reset movement direction to 'A'")
         
-        # Clean up encounter screenshots
+        # Clean up encounter screenshots (ALWAYS delete images after encounter)
         self.cleanup_encounter_screenshots()
         
-        # Wait a bit more before resuming movement
-        time.sleep(1.0)
+        print("🚀 Ready to resume hunting!")
     
     def hunt_loop(self):
         """Main hunting loop - New approach: Check for encounters every 10 moves"""
@@ -1398,7 +1473,7 @@ class AutoHuntEngine:
                     # Capture full game screen for battle menu detection
                     screenshot = self.capture_full_game_screen()
                     if screenshot is not None:
-                        if self.detect_battle_menu(screenshot):
+                        if self.detect_battle_menu_fast(screenshot):
                             print("🎉 Battle menu detected - encounter found!")
                             self.handle_encounter(screenshot)
                             
@@ -1511,6 +1586,758 @@ class AutoHuntEngine:
             'is_paused': self.is_paused,
             'encounters_per_hour': (self.encounters_found / (current_time / 3600)) if current_time > 0 else 0
         }
+
+    def _enhance_contrast(self, image, factor):
+        """Enhance image contrast for better OCR"""
+        from PIL import ImageEnhance
+        enhancer = ImageEnhance.Contrast(image)
+        return enhancer.enhance(factor)
+    
+    def _sharpen_image(self, image):
+        """Apply sharpening filter to image"""
+        from PIL import ImageFilter
+        return image.filter(ImageFilter.SHARPEN)
+    
+    def _denoise_image(self, image):
+        """Apply denoising to image"""
+        import cv2
+        import numpy as np
+        # Convert PIL to OpenCV format
+        cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        # Apply denoising
+        denoised = cv2.fastNlMeansDenoising(cv_image)
+        # Convert back to PIL
+        from PIL import Image
+        return Image.fromarray(cv2.cvtColor(denoised, cv2.COLOR_BGR2RGB)).convert('L')
+    
+    def _apply_threshold(self, image, method='binary'):
+        """Apply threshold to image for better text contrast"""
+        import cv2
+        import numpy as np
+        cv_image = np.array(image)
+        
+        if method == 'binary':
+            _, thresh = cv2.threshold(cv_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        elif method == 'adaptive':
+            thresh = cv2.adaptiveThreshold(cv_image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+        else:
+            thresh = cv_image
+            
+        from PIL import Image
+        return Image.fromarray(thresh)
+    
+    def _morphology_cleanup(self, image):
+        """Apply morphological operations to clean up text"""
+        import cv2
+        import numpy as np
+        cv_image = np.array(image)
+        
+        # Create kernel
+        kernel = np.ones((2,2), np.uint8)
+        
+        # Apply morphological operations
+        opening = cv2.morphologyEx(cv_image, cv2.MORPH_OPEN, kernel)
+        closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel)
+        
+        from PIL import Image
+        return Image.fromarray(closing)
+
+    def detect_pokemon_names_top_screen(self, screenshot: np.ndarray, max_retries: int = 3) -> Tuple[List[str], bool, bool]:
+        """
+        Detect Pokemon names from the top screen area using enhanced OCR with retry logic
+        Returns: (pokemon_names, is_horde, contains_shiny)
+        """
+        try:
+            # Use custom detection area if available, otherwise default coordinates
+            if hasattr(self, 'custom_detection_area') and self.custom_detection_area:
+                x1, y1, x2, y2 = self.custom_detection_area
+            else:
+                # Default coordinates for Pokemon names area
+                x1, y1, x2, y2 = 342, 153, 1553, 228
+            
+            # Crop the region
+            crop_region = screenshot[y1:y2, x1:x2]
+            if crop_region.size == 0:
+                print("❌ Invalid crop region for Pokemon detection")
+                return [], False, False
+            
+            # Save debug screenshot
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+            crop_filename = f"pokemon_names_precise_area_{timestamp}.png"
+            crop_path = os.path.join(self.debug_dir, crop_filename)
+            cv2.imwrite(crop_path, crop_region)
+            
+            # Try OCR multiple times until we get some meaningful text
+            for attempt in range(max_retries):
+                # Enhanced preprocessing methods
+                preprocessing_methods = [
+                    ("High Contrast", lambda img: self._enhance_contrast(img, 2.5)),
+                    ("Medium Contrast", lambda img: self._enhance_contrast(img, 1.8)),
+                    ("Sharpened", lambda img: self._sharpen_image(img)),
+                    ("Threshold Binary", lambda img: self._apply_threshold(img, 'binary')),
+                    ("Morphology Cleaned", lambda img: self._morphology_cleanup(img)),
+                ]
+                
+                # OCR configurations
+                ocr_configs = [
+                    ("PSM 6", {"psm": 6, "oem": 3}),  # Block of text - works best
+                    ("PSM 7", {"psm": 7, "oem": 3}),  # Single text line
+                    ("PSM 8", {"psm": 8, "oem": 3}),  # Single word
+                ]
+                
+                all_ocr_results = []
+                
+                # Try each preprocessing method with each OCR config
+                for prep_name, prep_func in preprocessing_methods:
+                    try:
+                        processed_img = prep_func(crop_region.copy())
+                        
+                        for config_name, config in ocr_configs:
+                            try:
+                                custom_config = f'--psm {config["psm"]} --oem {config["oem"]} -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '
+                                
+                                # Get OCR text
+                                ocr_text = pytesseract.image_to_string(processed_img, config=custom_config).strip()
+                                
+                                if ocr_text and len(ocr_text) > 2:
+                                    all_ocr_results.append(ocr_text)
+                                        
+                            except Exception as e:
+                                continue  # Skip failed OCR attempts
+                                
+                    except Exception as e:
+                        continue  # Skip failed preprocessing
+                
+                # Combine all OCR results
+                combined_text = ' '.join(all_ocr_results)
+                
+                # If we got some text, process it
+                if combined_text and len(combined_text.strip()) > 3:
+                    # Process the text using the working method
+                    pokemon_names = self.extract_pokemon_names_working(combined_text)
+                    
+                    # Apply special Pokemon filtering only at the end
+                    filtered_names, is_horde, contains_shiny = self.apply_special_pokemon_filter(pokemon_names, combined_text)
+                    
+                    if filtered_names:  # If we found valid Pokemon after filtering
+                        print(f"🎯 Pokemon detected on attempt {attempt + 1}")
+                        print(f"   Names found: {filtered_names}")
+                        print(f"   Is Horde: {is_horde}")
+                        print(f"   Contains Shiny: {contains_shiny}")
+                        return filtered_names, is_horde, contains_shiny
+                
+                # If no valid Pokemon found, try again
+                if attempt < max_retries - 1:
+                    time.sleep(0.1)  # Small delay before retry
+            
+            # If all retries failed, return empty result
+            print(f"❌ No Pokemon detected after {max_retries} attempts")
+            return [], False, False
+            
+        except Exception as e:
+            print(f"❌ Error in Pokemon name detection: {e}")
+            return [], False, False
+
+    def extract_pokemon_names_working(self, raw_text: str) -> List[str]:
+        """Extract Pokemon names using the working method (revert to previous successful approach)"""
+        if not raw_text:
+            return []
+        
+        # Clean and normalize text
+        cleaned_text = ''.join(c if c.isalpha() or c.isspace() else ' ' for c in raw_text)
+        cleaned_text = ' '.join(cleaned_text.split()).lower()
+        
+        # Count Pokemon occurrences for horde detection
+        pokemon_counts = {}
+        found_any_normal = False
+        
+        # Check against each normal Pokemon name and count occurrences
+        for normal_pokemon in self.normal_pokemon_list:
+            count = self.count_pokemon_occurrences_working(normal_pokemon, cleaned_text)
+            if count > 0:
+                # For single Pokemon encounters, limit to 1 unless there are clear multiple instances
+                if count <= 2:
+                    pokemon_counts[normal_pokemon] = 1  # Treat as single Pokemon
+                else:
+                    # Only count as horde if there are 3+ strong matches (real horde)
+                    pokemon_counts[normal_pokemon] = count
+                found_any_normal = True
+        
+        # If no normal Pokemon found, try more aggressive matching
+        if not found_any_normal:
+            # Try partial matching - look for Pokemon names as substrings
+            for normal_pokemon in self.normal_pokemon_list:
+                if self.aggressive_pokemon_search_working(normal_pokemon, cleaned_text):
+                    pokemon_counts[normal_pokemon] = 1
+                    found_any_normal = True
+        
+        # Convert counts back to list format for compatibility
+        detected_pokemon = []
+        for pokemon, count in pokemon_counts.items():
+            # Add the pokemon name 'count' times to the list for horde detection
+            for _ in range(count):
+                detected_pokemon.append(pokemon)
+        
+        return detected_pokemon
+
+    def count_pokemon_occurrences_working(self, pokemon_name: str, text: str) -> int:
+        """Count Pokemon occurrences using the working method"""
+        if not pokemon_name or not text:
+            return 0
+        
+        pokemon_lower = pokemon_name.lower()
+        text_lower = text.lower()
+        
+        # Method 1: Exact word boundary matching
+        import re
+        pattern = r'\b' + re.escape(pokemon_lower) + r'\b'
+        exact_matches = len(re.findall(pattern, text_lower))
+        
+        if exact_matches > 0:
+            return exact_matches
+        
+        # Method 2: Substring matching with length validation
+        count = 0
+        words = text_lower.split()
+        
+        for word in words:
+            # Check if Pokemon name appears in this word
+            if pokemon_lower in word:
+                # Additional validation: the Pokemon name should be a significant part of the word
+                if len(word) > len(pokemon_lower) + 3:
+                    # For longer words, the Pokemon name should be at the start or end
+                    if word.startswith(pokemon_lower) or word.endswith(pokemon_lower):
+                        count += 1
+                    else:
+                        # Check if it's a close match
+                        similarity = self.calculate_string_similarity_working(pokemon_lower, word)
+                        if similarity >= 0.8:  # High similarity threshold
+                            count += 1
+                else:
+                    # For shorter words, direct substring match is fine
+                    count += 1
+        
+        return count
+
+    def aggressive_pokemon_search_working(self, pokemon_name: str, text: str) -> bool:
+        """More aggressive search for Pokemon names in OCR text"""
+        pokemon_lower = pokemon_name.lower()
+        text_lower = text.lower()
+        
+        # Method 1: Check if Pokemon name appears anywhere in text
+        if pokemon_lower in text_lower:
+            return True
+        
+        # Method 2: Check if most characters of Pokemon name are present consecutively
+        min_length = max(3, len(pokemon_lower) - 2)  # Allow up to 2 character differences
+        
+        for i in range(len(text_lower) - min_length + 1):
+            for j in range(i + min_length, min(i + len(pokemon_lower) + 3, len(text_lower) + 1)):
+                substring = text_lower[i:j]
+                
+                # Calculate similarity
+                similarity = self.calculate_string_similarity_working(pokemon_lower, substring)
+                if similarity >= 0.7:  # 70% similarity threshold
+                    return True
+        
+        # Method 3: Check if Pokemon name characters appear in order (with gaps allowed)
+        pokemon_chars = list(pokemon_lower)
+        text_chars = list(text_lower)
+        
+        matches = 0
+        text_index = 0
+        
+        for char in pokemon_chars:
+            while text_index < len(text_chars):
+                if text_chars[text_index] == char:
+                    matches += 1
+                    text_index += 1
+                    break
+                text_index += 1
+        
+        match_ratio = matches / len(pokemon_chars)
+        if match_ratio >= 0.8:  # 80% of characters must match in order
+            return True
+        
+        return False
+
+    def calculate_string_similarity_working(self, str1: str, str2: str) -> float:
+        """Calculate similarity between two strings using simple character matching"""
+        if not str1 or not str2:
+            return 0.0
+        
+        # Count matching characters
+        str1_chars = list(str1.lower())
+        str2_chars = list(str2.lower())
+        
+        matches = 0
+        for char in str1_chars:
+            if char in str2_chars:
+                str2_chars.remove(char)  # Remove to avoid double counting
+                matches += 1
+        
+        # Calculate similarity as ratio of matches to average length
+        avg_length = (len(str1) + len(str2)) / 2
+        similarity = matches / avg_length
+        
+        return min(similarity, 1.0)  # Cap at 1.0
+
+    def apply_special_pokemon_filter(self, pokemon_names: List[str], raw_text: str) -> Tuple[List[str], bool, bool]:
+        """Apply special Pokemon filtering to detected names"""
+        if not pokemon_names:
+            return [], False, False
+        
+        # Define legendary Pokemon that can appear
+        legendary_pokemon = ['moltres', 'articuno', 'entei', 'zapdos', 'suicune', 'raikou']
+        
+        # Check for shiny indicators
+        contains_shiny = 'shiny' in raw_text.lower()
+        
+        # Determine if this is a horde encounter
+        is_horde = self.detect_horde_encounter_working(pokemon_names)
+        
+        # Check if we have any special encounters (shiny or legendary)
+        has_special = contains_shiny or any(pokemon in legendary_pokemon for pokemon in pokemon_names)
+        
+        # If it's a special encounter, return as-is
+        if has_special:
+            return pokemon_names, is_horde, contains_shiny
+        
+        # For normal encounters, check if all Pokemon are in the normal list
+        valid_pokemon = []
+        for pokemon in pokemon_names:
+            if pokemon in self.normal_pokemon_list:
+                valid_pokemon.append(pokemon)
+        
+        # If we found valid normal Pokemon, return them
+        if valid_pokemon:
+            is_horde = self.detect_horde_encounter_working(valid_pokemon)
+            return valid_pokemon, is_horde, False
+        
+        # If no valid Pokemon found, return original list (let the old logic handle it)
+        return pokemon_names, is_horde, contains_shiny
+
+    def detect_horde_encounter_working(self, pokemon_names: List[str]) -> bool:
+        """Detect if this is a horde encounter (2+ Pokemon with same name)"""
+        if len(pokemon_names) < 2:
+            return False
+        
+        # Count occurrences of each Pokemon name
+        name_counts = {}
+        for name in pokemon_names:
+            name_counts[name] = name_counts.get(name, 0) + 1
+        
+        # Check if any Pokemon appears 2+ times
+        for name, count in name_counts.items():
+            if count >= 2:
+                return True
+        
+        return False
+
+    def analyze_encounter_for_pokemon(self, screenshot: np.ndarray) -> Tuple[bool, str]:
+        """
+        Analyze encounter for Pokemon names and determine action
+        Returns: (should_continue_hunt, encounter_type)
+        """
+        print("🔍 Analyzing encounter for Pokemon names...")
+        
+        # Detect Pokemon names from top screen area with retry logic
+        pokemon_names, is_horde, contains_shiny = self.detect_pokemon_names_top_screen(screenshot, max_retries=3)
+        
+        if not pokemon_names:
+            print("⚠️ Could not detect Pokemon names - treating as normal encounter")
+            return True, "unknown"
+        
+        print(f"🔍 Checking detected Pokemon: {pokemon_names}")
+        print(f"🔍 Against normal list: {self.normal_pokemon_list}")
+        
+        # Determine encounter type and action
+        if is_horde:
+            self.horde_encounters_found += 1
+            self.last_encounter_type = "horde"
+            # Get unique Pokemon names for display
+            unique_names = list(set(pokemon_names))
+            # Count each unique Pokemon
+            name_counts = {}
+            for name in pokemon_names:
+                name_counts[name] = name_counts.get(name, 0) + 1
+            
+            horde_description = ", ".join([f"{count}x {name}" for name, count in name_counts.items()])
+            self.last_detected_pokemon = f"Horde: {horde_description}"
+            print(f"🎯 HORDE ENCOUNTER detected: {horde_description}")
+            return True, "horde"  # Continue hunt but with special sequence
+        
+        # Check for shiny
+        if contains_shiny:
+            self.shiny_encounters_found += 1
+            self.last_encounter_type = "shiny"
+            unique_names = list(set(pokemon_names))
+            self.last_detected_pokemon = f"Shiny: {', '.join(unique_names)}"
+            print(f"✨ SHINY ENCOUNTER detected: {unique_names}")
+            self.handle_special_encounter(unique_names, True, screenshot)
+            return False, "shiny"  # Pause hunt
+        
+        # Check if ALL detected Pokemon are in the normal list
+        unique_pokemon = list(set(pokemon_names))  # Get unique names only
+        all_normal = True
+        special_pokemon = []
+        
+        for name in unique_pokemon:
+            name_is_normal = False
+            for normal_pokemon in self.normal_pokemon_list:
+                if self.is_pokemon_name_match(normal_pokemon, name):
+                    name_is_normal = True
+                    break
+            if not name_is_normal:
+                all_normal = False
+                special_pokemon.append(name)
+        
+        if not all_normal:
+            # At least one Pokemon is not in normal list - special encounter
+            self.special_encounters_found += 1
+            self.last_encounter_type = "special"
+            self.last_detected_pokemon = f"Special: {', '.join(special_pokemon)}"
+            print(f"🎯 SPECIAL ENCOUNTER detected: {special_pokemon}")
+            self.handle_special_encounter(special_pokemon, False, screenshot)
+            return False, "special"  # Pause hunt
+        
+        # All Pokemon are normal
+        self.last_encounter_type = "normal"
+        self.last_detected_pokemon = ', '.join(unique_pokemon)
+        print(f"✅ Normal encounter: {unique_pokemon} (all found in normal list)")
+        return True, "normal"
+
+    def is_pokemon_name_match(self, pokemon_name: str, detected_name: str) -> bool:
+        """Check if a detected name matches a Pokemon name (bidirectional fuzzy matching)"""
+        pokemon_lower = pokemon_name.lower()
+        detected_lower = detected_name.lower()
+        
+        # Direct match
+        if pokemon_lower == detected_lower:
+            return True
+        
+        # Check if one contains the other
+        if pokemon_lower in detected_lower or detected_lower in pokemon_lower:
+            return True
+        
+        # Fuzzy matching for OCR errors
+        if self.is_pokemon_name_in_word_fuzzy(pokemon_name, detected_name):
+            return True
+        
+        if self.is_pokemon_name_in_word_fuzzy(detected_name, pokemon_name):
+            return True
+        
+        return False
+
+    def is_pokemon_name_in_word_fuzzy(self, pokemon_name: str, word: str) -> bool:
+        """Check if a Pokemon name is contained in a word using fuzzy matching"""
+        pokemon_lower = pokemon_name.lower()
+        word_lower = word.lower()
+        
+        # Skip if word is too short
+        if len(word_lower) < len(pokemon_lower):
+            return False
+        
+        # Check if most characters of Pokemon name are present in order
+        pokemon_chars = list(pokemon_lower)
+        word_chars = list(word_lower)
+        
+        matches = 0
+        word_index = 0
+        
+        for char in pokemon_chars:
+            while word_index < len(word_chars):
+                if word_chars[word_index] == char:
+                    matches += 1
+                    word_index += 1
+                    break
+                word_index += 1
+        
+        # If most characters match in order, consider it a match
+        match_ratio = matches / len(pokemon_chars)
+        if match_ratio >= 0.8:  # 80% of characters must match for fuzzy word matching
+            return True
+        
+        return False
+
+    def handle_special_encounter(self, pokemon_names: List[str], is_shiny: bool, screenshot: np.ndarray):
+        """Handle detection of special or shiny Pokemon"""
+        pokemon_list_str = ', '.join(pokemon_names)
+        
+        if is_shiny:
+            encounter_type = "✨ SHINY"
+            message = f"✨ SHINY POKEMON DETECTED: {pokemon_list_str.upper()} ✨"
+            print(f"🌟 {message}")
+        else:
+            encounter_type = "🎯 SPECIAL"
+            message = f"🎯 SPECIAL ENCOUNTER: {pokemon_list_str.upper()}"
+            print(f"🎯 {message}")
+        
+        # Save special screenshot
+        prefix = f"{'shiny' if is_shiny else 'special'}_{pokemon_list_str.replace(', ', '_')}"
+        special_screenshot_path = self.save_debug_screenshot(screenshot, prefix)
+        
+        # Trigger callback if set
+        if self.special_encounter_callback:
+            self.special_encounter_callback(encounter_type, {
+                'pokemon_names': pokemon_names,
+                'is_shiny': is_shiny,
+                'screenshot_path': special_screenshot_path,
+                'message': message
+            })
+        
+        # Show popup notification
+        self.show_special_encounter_popup(pokemon_names, is_shiny, message)
+
+    def show_special_encounter_popup(self, pokemon_names: List[str], is_shiny: bool, message: str):
+        """Show popup notification for special encounters"""
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            import threading
+            
+            def show_popup():
+                root = tk.Tk()
+                root.withdraw()
+                
+                title = "✨ SHINY POKEMON!" if is_shiny else "🎯 SPECIAL ENCOUNTER!"
+                pokemon_list_str = ', '.join(pokemon_names)
+                
+                popup_message = f"{message}\n\n"
+                if is_shiny:
+                    popup_message += f"🌟 SHINY {pokemon_list_str.upper()} detected!\n"
+                    popup_message += "🎉 Extremely rare encounter!\n\n"
+                else:
+                    popup_message += f"🎯 {pokemon_list_str.upper()} not in normal list!\n"
+                    popup_message += "📊 Special encounter detected!\n\n"
+                
+                popup_message += "⚠️ Hunt has been PAUSED.\n"
+                popup_message += "📁 Screenshot saved in debug_screenshots.\n"
+                popup_message += "🎮 Check your game!"
+                
+                messagebox.showinfo(title, popup_message)
+                root.destroy()
+            
+            popup_thread = threading.Thread(target=show_popup, daemon=True)
+            popup_thread.start()
+            
+        except Exception as e:
+            print(f"❌ Error showing popup: {e}")
+
+    def set_special_encounter_callback(self, callback):
+        """Set callback for special encounter notifications"""
+        self.special_encounter_callback = callback
+
+    def update_normal_pokemon_list(self, pokemon_list: List[str]):
+        """Update the list of normal Pokemon for current location"""
+        self.normal_pokemon_list = [p.lower() for p in pokemon_list]
+        print(f"✅ Updated normal Pokemon list: {self.normal_pokemon_list}")
+
+    def get_encounter_statistics(self) -> Dict[str, Any]:
+        """Get enhanced statistics including special encounters"""
+        base_stats = self.get_statistics()
+        base_stats.update({
+            'special_encounters': self.special_encounters_found,
+            'shiny_encounters': self.shiny_encounters_found,
+            'horde_encounters': self.horde_encounters_found,
+            'last_detected_pokemon': self.last_detected_pokemon,
+            'last_encounter_type': self.last_encounter_type
+        })
+        return base_stats
+
+    def execute_horde_sequence(self):
+        """Execute D-S-E sequence for horde encounters"""
+        print("🎮 Executing horde sequence: D → S → E")
+        
+        # Press D
+        print("   Pressing D key")
+        self.input_manager.press_key('d')
+        time.sleep(0.1)
+        self.input_manager.release_key('d')
+        time.sleep(0.5)
+        
+        # Press S
+        print("   Pressing S key")
+        self.input_manager.press_key('s')
+        time.sleep(0.1)
+        self.input_manager.release_key('s')
+        time.sleep(0.5)
+        
+        # Press E
+        print("   Pressing E key")
+        self.input_manager.press_key('e')
+        time.sleep(0.1)
+        self.input_manager.release_key('e')
+        
+        print("✅ Horde sequence (D-S-E) completed")
+
+    def detect_battle_menu_fast(self, screenshot: np.ndarray) -> bool:
+        """Fast battle menu detection using template matching only (no pokecenter check)"""
+        try:
+            # Only check battle menu templates, skip pokecenter templates
+            battle_templates = [
+                'battle_menu',
+                'battle_menu_example'
+            ]
+            
+            for template_name in battle_templates:
+                if template_name in self.templates:
+                    detected, location = self.detect_template(screenshot, template_name)
+                    if detected:
+                        print(f"✅ Battle menu detected using template: {template_name}")
+                        return True
+            
+            print("❌ No battle menu templates matched")
+            return False
+            
+        except Exception as e:
+            print(f"❌ Error in fast battle menu detection: {e}")
+            return False
+
+    def test_pokemon_detection_fix(self):
+        """Test the improved Pokemon detection to verify fixes"""
+        print("🧪 Testing Pokemon detection improvements...")
+        
+        # Test case from user's console output
+        test_text = "ee me iPidgeottoLv"
+        print(f"Testing with OCR text: '{test_text}'")
+        
+        # Test each Pokemon
+        test_results = {}
+        for pokemon in self.normal_pokemon_list:
+            count = self.count_pokemon_occurrences(pokemon, test_text)
+            test_results[pokemon] = count
+        
+        print("\n📊 Test Results:")
+        for pokemon, count in test_results.items():
+            print(f"   {pokemon}: {count} occurrences")
+        
+        # Expected: only pidgeotto should be found (1 time), not pidgey
+        expected_pidgeotto = 1
+        expected_pidgey = 0
+        
+        actual_pidgeotto = test_results.get('pidgeotto', 0)
+        actual_pidgey = test_results.get('pidgey', 0)
+        
+        print(f"\n🎯 Validation:")
+        print(f"   Expected pidgeotto: {expected_pidgeotto}, Got: {actual_pidgeotto} {'✅' if actual_pidgeotto == expected_pidgeotto else '❌'}")
+        print(f"   Expected pidgey: {expected_pidgey}, Got: {actual_pidgey} {'✅' if actual_pidgey == expected_pidgey else '❌'}")
+        
+        success = (actual_pidgeotto == expected_pidgeotto and actual_pidgey == expected_pidgey)
+        print(f"\n{'✅ Test PASSED' if success else '❌ Test FAILED'}")
+        
+        return success
+
+    def test_custom_detection_area(self, screenshot: np.ndarray) -> bool:
+        """Test OCR detection on user-selected custom area"""
+        if not hasattr(self, 'custom_detection_area'):
+            print("❌ No custom detection area has been set")
+            return False
+        
+        try:
+            import pytesseract
+            from PIL import Image
+            import os
+            
+            # Get custom area coordinates
+            left, top, right, bottom = self.custom_detection_area
+            
+            print(f"🔍 Testing custom detection area: ({left}, {top}) to ({right}, {bottom})")
+            print(f"   Area size: {right - left}x{bottom - top} pixels")
+            
+            # Extract the custom area from screenshot
+            custom_region = screenshot[top:bottom, left:right]
+            
+            # Save debug screenshot of the custom area with a highlighted border
+            import cv2
+            debug_screenshot = screenshot.copy()
+            cv2.rectangle(debug_screenshot, (left, top), (right, bottom), (0, 255, 0), 3)
+            self.save_debug_screenshot(debug_screenshot, "custom_area_test_full")
+            
+            # Save just the selected area
+            self.save_debug_screenshot(custom_region, "custom_area_test_region")
+            
+            # Convert to PIL for OCR
+            region_rgb = cv2.cvtColor(custom_region, cv2.COLOR_BGR2RGB)
+            pil_region = Image.fromarray(region_rgb)
+            
+            # Try to set Tesseract path
+            possible_paths = [
+                r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+                r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+                r'C:\Users\{}\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'.format(os.getenv('USERNAME', '')),
+            ]
+            
+            for path in possible_paths:
+                if os.path.exists(path):
+                    pytesseract.pytesseract.tesseract_cmd = path
+                    break
+            
+            # Apply multiple OCR approaches
+            results = []
+            
+            # Enhanced contrast version
+            gray_image = pil_region.convert('L')
+            from PIL import ImageEnhance
+            enhancer = ImageEnhance.Contrast(gray_image)
+            enhanced_image = enhancer.enhance(3.0)
+            
+            # Approach 1: High contrast with character filtering
+            config1 = r'--oem 3 --psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '
+            text1 = pytesseract.image_to_string(enhanced_image, config=config1).strip()
+            results.append(("High Contrast", text1))
+            
+            # Approach 2: Single line mode
+            config2 = r'--oem 3 --psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '
+            text2 = pytesseract.image_to_string(enhanced_image, config=config2).strip()
+            results.append(("Single Line", text2))
+            
+            # Approach 3: Raw text without enhancement
+            config3 = r'--oem 3 --psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '
+            text3 = pytesseract.image_to_string(pil_region, config=config3).strip()
+            results.append(("Raw Image", text3))
+            
+            print(f"\n📋 OCR Results from Custom Area:")
+            for approach, text in results:
+                print(f"   {approach}: '{text}'")
+            
+            # Use the new detection system to analyze the text
+            all_detected_text = " ".join([text for _, text in results if text])
+            
+            if all_detected_text:
+                print(f"\n🔍 Combined OCR text: '{all_detected_text}'")
+                
+                # Use the working detection methods
+                pokemon_names = self.extract_pokemon_names_working(all_detected_text)
+                
+                # Apply special Pokemon filtering
+                filtered_names, is_horde, contains_shiny = self.apply_special_pokemon_filter(pokemon_names, all_detected_text)
+                
+                print(f"\n🎯 New Detection System Results:")
+                if filtered_names:
+                    print(f"   Pokemon found: {filtered_names}")
+                    print(f"   Is Horde: {is_horde}")
+                    print(f"   Contains Shiny: {contains_shiny}")
+                    
+                    if contains_shiny:
+                        print("   ✨ SHINY encounter detected!")
+                    elif any(p in ['moltres', 'articuno', 'entei', 'zapdos', 'suicune', 'raikou'] for p in filtered_names):
+                        print("   🔥 LEGENDARY encounter detected!")
+                    elif filtered_names[0] not in self.normal_pokemon_list and filtered_names[0] != "shiny_unknown":
+                        print("   🎯 SPECIAL encounter detected!")
+                    else:
+                        print("   ✅ Normal encounter detected")
+                else:
+                    print("   ❌ No valid Pokemon detected")
+                
+                return True
+            else:
+                print("❌ No text detected in selected area")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Error testing custom detection area: {e}")
+            return False
 
 
 class TemplateManager:

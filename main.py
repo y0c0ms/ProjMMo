@@ -455,8 +455,8 @@ class PokeMMOOverlay:
         self.macro_manager = MacroManager()
         self.template_manager = TemplateManager()
         self.auto_hunt_engine = AutoHuntEngine(self.window_manager, self.input_manager)
-        self.sweet_scent_engine = SweetScentEngine(self.window_manager, self.input_manager, self.macro_manager)
-        self.pp_auto_hunt_engine = PPAutoHuntEngine(self.window_manager, self.input_manager, self.macro_manager, self.template_manager)
+        self.sweet_scent_engine = SweetScentEngine(self.window_manager, self.input_manager, self.macro_manager, self.auto_hunt_engine)
+        self.pp_auto_hunt_engine = PPAutoHuntEngine(self.window_manager, self.input_manager, self.macro_manager, self.template_manager, self.auto_hunt_engine)
         
         # UI variables
         self.is_recording = False
@@ -862,7 +862,7 @@ class PokeMMOOverlay:
                                    command=self.update_pp_hunt_config)
         battle_spinbox.grid(row=1, column=3, sticky=tk.W, padx=(5, 0), pady=2)
         
-        # Row 3: Heal Delay
+        # Row 3: Heal Delay and OCR Frequency
         tk.Label(settings_grid, text="Heal Delay (s):", font=('Segoe UI', 8), 
                 fg='#bdc3c7', bg='#2a2a2a').grid(row=2, column=0, sticky=tk.W, pady=2)
         
@@ -870,7 +870,26 @@ class PokeMMOOverlay:
         heal_spinbox = tk.Spinbox(settings_grid, from_=0.5, to=60.0, increment=0.5, width=5,
                                  textvariable=self.pp_heal_delay_var, 
                                  command=self.update_pp_hunt_config)
-        heal_spinbox.grid(row=2, column=1, sticky=tk.W, padx=(5, 0), pady=2)
+        heal_spinbox.grid(row=2, column=1, sticky=tk.W, padx=(5, 20), pady=2)
+        
+        tk.Label(settings_grid, text="OCR Frequency (s):", font=('Segoe UI', 8), 
+                fg='#bdc3c7', bg='#2a2a2a').grid(row=2, column=2, sticky=tk.W, pady=2)
+        
+        self.ocr_frequency_var = tk.StringVar(value="0.5")
+        ocr_freq_spinbox = tk.Spinbox(settings_grid, from_=0.1, to=5.0, increment=0.1, width=5,
+                                     textvariable=self.ocr_frequency_var, 
+                                     command=self.update_pp_hunt_config)
+        ocr_freq_spinbox.grid(row=2, column=3, sticky=tk.W, padx=(5, 0), pady=2)
+        
+        # Row 4: Teleport Key
+        tk.Label(settings_grid, text="Teleport Key:", font=('Segoe UI', 8), 
+                fg='#bdc3c7', bg='#2a2a2a').grid(row=3, column=0, sticky=tk.W, pady=2)
+        
+        self.teleport_key_var = tk.StringVar(value="q")
+        teleport_entry = tk.Entry(settings_grid, textvariable=self.teleport_key_var, width=3, 
+                                 font=('Segoe UI', 8))
+        teleport_entry.bind('<KeyRelease>', lambda e: self.update_pp_hunt_config())
+        teleport_entry.grid(row=3, column=1, sticky=tk.W, padx=(5, 20), pady=2)
         
         # Battle sequence section
         battle_frame = tk.Frame(scrollable_frame, bg='#2a2a2a', relief=tk.RAISED, bd=1)
@@ -1026,6 +1045,94 @@ class PokeMMOOverlay:
                  fg='#ffffff', bg='#fd79a8',
                  activeforeground='#ffffff', activebackground='#e84393',
                  relief=tk.RAISED, bd=1, pady=6).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
+        
+        # Third row for OCR controls
+        test_button_row3 = tk.Frame(test_frame, bg='#2a2a2a')
+        test_button_row3.pack(fill=tk.X, padx=10, pady=(4, 8))
+        
+        # Select Detection Area button
+        tk.Button(test_button_row3, text="🎯 Select Detection Area", 
+                 command=self.select_detection_area,
+                 font=('Segoe UI', 9),
+                 fg='#ffffff', bg='#6c5ce7',
+                 activeforeground='#ffffff', activebackground='#5f3dc4',
+                 relief=tk.RAISED, bd=1, pady=6).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        
+        # Test Selected Area button
+        tk.Button(test_button_row3, text="🔍 Test Selected Area", 
+                 command=self.test_selected_area,
+                 font=('Segoe UI', 9),
+                 fg='#ffffff', bg='#a29bfe',
+                 activeforeground='#ffffff', activebackground='#6c5ce7',
+                 relief=tk.RAISED, bd=1, pady=6).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
+        
+        # Pokemon List Management section
+        pokemon_frame = tk.Frame(scrollable_frame, bg='#2a2a2a', relief=tk.RAISED, bd=1)
+        pokemon_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        tk.Label(pokemon_frame, text="🎯 Pokemon List Management", 
+                font=('Segoe UI', 10, 'bold'), 
+                fg='#ffffff', bg='#2a2a2a').pack(pady=(6, 6))
+        
+        # Current normal Pokemon list display
+        current_list_frame = tk.Frame(pokemon_frame, bg='#2a2a2a')
+        current_list_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
+        
+        tk.Label(current_list_frame, text="Current Normal Pokemon:", 
+                font=('Segoe UI', 9, 'bold'), 
+                fg='#bdc3c7', bg='#2a2a2a').pack(anchor=tk.W)
+        
+        self.current_pokemon_label = tk.Label(current_list_frame, 
+                text="sentret, pidgey, pidgeotto, hoppip, meowth, persian, psyduck, slowpoke", 
+                font=('Segoe UI', 8), 
+                fg='#95a5a6', bg='#2a2a2a', wraplength=600, justify=tk.LEFT)
+        self.current_pokemon_label.pack(anchor=tk.W, pady=(2, 0))
+        
+        # Add Pokemon section
+        add_pokemon_frame = tk.Frame(pokemon_frame, bg='#2a2a2a')
+        add_pokemon_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
+        
+        tk.Label(add_pokemon_frame, text="Add Pokemon to Normal List:", 
+                font=('Segoe UI', 9), 
+                fg='#bdc3c7', bg='#2a2a2a').pack(anchor=tk.W)
+        
+        pokemon_input_frame = tk.Frame(add_pokemon_frame, bg='#2a2a2a')
+        pokemon_input_frame.pack(fill=tk.X, pady=(2, 0))
+        
+        self.pokemon_input_var = tk.StringVar()
+        pokemon_entry = tk.Entry(pokemon_input_frame, textvariable=self.pokemon_input_var, 
+                               font=('Segoe UI', 9), width=20)
+        pokemon_entry.pack(side=tk.LEFT, padx=(0, 5))
+        
+        tk.Button(pokemon_input_frame, text="➕ Add", 
+                 command=self.add_pokemon_to_list,
+                 font=('Segoe UI', 8), 
+                 fg='#ffffff', bg='#27ae60',
+                 activeforeground='#ffffff', activebackground='#229954',
+                 relief=tk.RAISED, bd=1, width=8).pack(side=tk.LEFT, padx=(0, 5))
+        
+        tk.Button(pokemon_input_frame, text="🔄 Reset to Default", 
+                 command=self.reset_pokemon_list,
+                 font=('Segoe UI', 8), 
+                 fg='#ffffff', bg='#e74c3c',
+                 activeforeground='#ffffff', activebackground='#c0392b',
+                 relief=tk.RAISED, bd=1, width=12).pack(side=tk.LEFT)
+        
+        # Instructions
+        tk.Label(add_pokemon_frame, 
+                text="💡 Enter Pokemon names separated by commas (e.g., 'rattata, caterpie')", 
+                font=('Segoe UI', 7), 
+                fg='#95a5a6', bg='#2a2a2a').pack(anchor=tk.W, pady=(4, 0))
+        
+        tk.Label(add_pokemon_frame, 
+                text="ℹ️ Pokemon not in this list will be considered special encounters", 
+                font=('Segoe UI', 7), 
+                fg='#95a5a6', bg='#2a2a2a').pack(anchor=tk.W)
+        
+        tk.Label(add_pokemon_frame, 
+                text="🔍 OCR Frequency: How often to take screenshots for Pokemon detection (lower = more frequent)", 
+                font=('Segoe UI', 7), 
+                fg='#95a5a6', bg='#2a2a2a').pack(anchor=tk.W)
         
         # Preset management section
         preset_frame = tk.Frame(scrollable_frame, bg='#2a2a2a', relief=tk.RAISED, bd=1)
@@ -1595,10 +1702,11 @@ class PokeMMOOverlay:
         test_controls = tk.Frame(test_frame, bg='#2a2a2a')
         test_controls.pack(fill=tk.X, padx=10, pady=(0, 8))
         
+        # First row of test buttons
         test_buttons_row1 = tk.Frame(test_controls, bg='#2a2a2a')
-        test_buttons_row1.pack(fill=tk.X, pady=(0, 4))
+        test_buttons_row1.pack(fill=tk.X, pady=(0, 2))
         
-        tk.Button(test_buttons_row1, text="⚔️ Test Battle Menu", 
+        tk.Button(test_buttons_row1, text="⚔️ Test Battle Menu + Pokemon", 
                  command=self.test_battle_menu,
                  font=('Segoe UI', 9),
                  fg='#ffffff', bg='#fd7e14',
@@ -1610,13 +1718,42 @@ class PokeMMOOverlay:
                  font=('Segoe UI', 9),
                  fg='#ffffff', bg='#6610f2',
                  activeforeground='#ffffff', activebackground='#520dc2',
-                 relief=tk.RAISED, bd=1, pady=6).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 2))
+                 relief=tk.RAISED, bd=1, pady=6).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
         
-        tk.Button(test_buttons_row1, text="📁 Screenshots", 
+        # Second row of test buttons  
+        test_buttons_row2 = tk.Frame(test_controls, bg='#2a2a2a')
+        test_buttons_row2.pack(fill=tk.X, pady=(2, 4))
+        
+        tk.Button(test_buttons_row2, text="📁 Screenshots", 
                  command=self.open_screenshots_folder,
                  font=('Segoe UI', 9),
                  fg='#ffffff', bg='#fd79a8',
                  activeforeground='#ffffff', activebackground='#e84393',
+                 relief=tk.RAISED, bd=1, pady=6).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+        
+        tk.Button(test_buttons_row2, text="🧪 Test Pokemon Fix", 
+                 command=self.test_pokemon_detection_fix,
+                 font=('Segoe UI', 9),
+                 fg='#ffffff', bg='#17a2b8',
+                 activeforeground='#ffffff', activebackground='#138496',
+                 relief=tk.RAISED, bd=1, pady=6).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+        
+        # Third row of test buttons for area selection
+        test_buttons_row3 = tk.Frame(test_controls, bg='#2a2a2a')
+        test_buttons_row3.pack(fill=tk.X, pady=(2, 4))
+        
+        tk.Button(test_buttons_row3, text="🎯 Select Detection Area", 
+                 command=self.select_detection_area,
+                 font=('Segoe UI', 9),
+                 fg='#ffffff', bg='#28a745',
+                 activeforeground='#ffffff', activebackground='#1e7e34',
+                 relief=tk.RAISED, bd=1, pady=6).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+        
+        tk.Button(test_buttons_row3, text="🔍 Test Selected Area", 
+                 command=self.test_selected_area,
+                 font=('Segoe UI', 9),
+                 fg='#ffffff', bg='#ffc107',
+                 activeforeground='#ffffff', activebackground='#d39e00',
                  relief=tk.RAISED, bd=1, pady=6).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
         
         tk.Label(test_controls, text="Test detection features and access debug screenshots", 
@@ -1967,8 +2104,8 @@ class PokeMMOOverlay:
 
     
     def test_battle_menu(self):
-        """Test battle menu detection on current screen"""
-        print("⚔️ Testing battle menu detection...")
+        """Test battle menu detection and Pokemon identification on current screen"""
+        print("⚔️ Testing battle menu detection and Pokemon identification...")
         
         # Capture full game screen for battle menu detection
         screenshot = self.auto_hunt_engine.capture_full_game_screen()
@@ -1980,16 +2117,48 @@ class PokeMMOOverlay:
         
         print(f"✓ Full game screenshot captured: {screenshot.shape[1]}x{screenshot.shape[0]} pixels")
         
-        # Test battle menu detection
-        battle_menu_detected = self.auto_hunt_engine.detect_battle_menu(screenshot)
+        # Test battle menu detection (fast version)
+        battle_menu_detected = self.auto_hunt_engine.detect_battle_menu_fast(screenshot)
         
-        from tkinter import messagebox
+        result_message = ""
+        
         if battle_menu_detected:
             print("🎉 Battle menu detected!")
-            messagebox.showinfo("Battle Menu Test", "✅ Battle menu detected on current screen!\n\nThe 4-button menu (FIGHT/BAG/Pokémon/RUN) was found.")
+            result_message = "✅ Battle menu detected!\n\n"
+            
+            # Now test Pokemon detection
+            print("🔍 Testing Pokemon detection...")
+            try:
+                pokemon_names, is_horde, contains_shiny = self.auto_hunt_engine.detect_pokemon_names_top_screen(screenshot)
+                
+                if pokemon_names:
+                    result_message += f"🎯 Pokemon detected: {', '.join(set(pokemon_names))}\n"
+                    if is_horde:
+                        horde_count = {}
+                        for pokemon in pokemon_names:
+                            horde_count[pokemon] = horde_count.get(pokemon, 0) + 1
+                        horde_details = ", ".join([f"{count}x {pokemon}" for pokemon, count in horde_count.items()])
+                        result_message += f"🎯 HORDE: {horde_details}\n"
+                    if contains_shiny:
+                        result_message += "✨ SHINY detected!\n"
+                    
+                    # Check if special encounter
+                    normal_pokemon = self.auto_hunt_engine.normal_pokemon_list
+                    special_pokemon = [p for p in set(pokemon_names) if p not in normal_pokemon]
+                    if special_pokemon:
+                        result_message += f"🌟 SPECIAL: {', '.join(special_pokemon)}\n"
+                else:
+                    result_message += "❌ No Pokemon detected from OCR\n"
+                    
+            except Exception as e:
+                print(f"❌ Error in Pokemon detection: {e}")
+                result_message += f"❌ Error in Pokemon detection: {e}\n"
         else:
             print("❌ No battle menu detected")
-            messagebox.showinfo("Battle Menu Test", "❌ No battle menu detected on current screen.\n\nMake sure you're in a battle with the menu visible.")
+            result_message = "❌ No battle menu detected on current screen.\n\nMake sure you're in a battle with the menu visible."
+        
+        from tkinter import messagebox
+        messagebox.showinfo("Battle Menu + Pokemon Test", result_message)
         
         print(f"Battle menu detection result: {battle_menu_detected}")
     
@@ -2069,6 +2238,60 @@ class PokeMMOOverlay:
             print("❌ Screenshots folder doesn't exist yet")
             from tkinter import messagebox
             messagebox.showwarning("Folder Not Found", "Screenshots folder doesn't exist yet.\n\nTake some test screenshots first!")
+    
+    def test_pokemon_detection_fix(self):
+        """Test the Pokemon detection fix"""
+        try:
+            success = self.auto_hunt_engine.test_pokemon_detection_fix()
+            if success:
+                from tkinter import messagebox
+                messagebox.showinfo("Test Results", "✅ Pokemon detection fix test PASSED!\n\nThe system now correctly identifies single Pokemon without false matches.")
+            else:
+                from tkinter import messagebox
+                messagebox.showwarning("Test Results", "❌ Pokemon detection fix test FAILED!\n\nCheck console output for details.")
+        except Exception as e:
+            print(f"❌ Error testing Pokemon detection: {e}")
+            from tkinter import messagebox
+            messagebox.showerror("Test Error", f"Error running Pokemon detection test:\n{e}")
+    
+    def select_detection_area(self):
+        """Open interactive area selection overlay"""
+        try:
+            self.detection_area_selector = DetectionAreaSelector(self.auto_hunt_engine)
+            self.detection_area_selector.show()
+        except Exception as e:
+            print(f"❌ Error opening area selector: {e}")
+            from tkinter import messagebox
+            messagebox.showerror("Error", f"Error opening area selector:\n{e}")
+    
+    def test_selected_area(self):
+        """Test OCR on the user-selected detection area"""
+        try:
+            if not hasattr(self.auto_hunt_engine, 'custom_detection_area'):
+                from tkinter import messagebox
+                messagebox.showwarning("No Area Selected", "Please select a detection area first using '🎯 Select Detection Area'")
+                return
+            
+            # Capture current game screen
+            screenshot = self.auto_hunt_engine.capture_full_game_screen()
+            if screenshot is None:
+                from tkinter import messagebox
+                messagebox.showerror("Error", "Could not capture game screen. Make sure PokeMMO is running.")
+                return
+            
+            # Test the custom area
+            result = self.auto_hunt_engine.test_custom_detection_area(screenshot)
+            
+            from tkinter import messagebox
+            if result:
+                messagebox.showinfo("Test Results", f"✅ OCR Test Completed!\n\nCheck console output for detected text and Pokemon names.\n\nDebug screenshot saved showing the selected area.")
+            else:
+                messagebox.showwarning("Test Results", "❌ No text detected in selected area.\n\nTry selecting a different area or check if the game is in battle.")
+                
+        except Exception as e:
+            print(f"❌ Error testing selected area: {e}")
+            from tkinter import messagebox
+            messagebox.showerror("Test Error", f"Error testing selected area:\n{e}")
     
     def select_pokemmo_window(self):
         """Show manual window selection dialog with numbered list"""
@@ -2585,9 +2808,16 @@ class PokeMMOOverlay:
                 'encounter_loop_type': self.pp_loop_type_var.get(),
                 'encounter_loop_interval': float(self.pp_loop_interval_var.get()),
                 'heal_delay': float(self.pp_heal_delay_var.get()),
+                'heal_key': self.teleport_key_var.get().strip().lower() if self.teleport_key_var.get().strip() else 'q',
+                'ocr_frequency': float(self.ocr_frequency_var.get()),
             }
             self.pp_auto_hunt_engine.update_configuration(config)
+            
+            # Also update the main auto hunt engine with OCR frequency
+            self.auto_hunt_engine.ocr_screenshot_interval = float(self.ocr_frequency_var.get())
+            
             print("✅ PP Auto Hunt configuration updated")
+            print(f"🔍 OCR screenshot frequency set to: {self.ocr_frequency_var.get()}s")
             
         except ValueError as e:
             print(f"Invalid PP Auto Hunt configuration values: {e}")
@@ -2712,6 +2942,14 @@ class PokeMMOOverlay:
                 self.pp_loop_interval_var.set(str(config.encounter_loop_interval))
                 self.pp_heal_delay_var.set(str(config.heal_delay))
                 
+                # Update teleport key if available
+                if hasattr(config, 'heal_key'):
+                    self.teleport_key_var.set(str(config.heal_key))
+                
+                # Update OCR frequency if available
+                if hasattr(config, 'ocr_screenshot_interval'):
+                    self.ocr_frequency_var.set(str(config.ocr_screenshot_interval))
+                
                 # Update macro selection
                 if config.selected_macro:
                     self.pp_macro_var.set(config.selected_macro)
@@ -2796,6 +3034,305 @@ class PokeMMOOverlay:
             print(f"🎯 Encounter detected at {data}")
         elif event_type == 'encounter_end':
             print(f"✅ Encounter completed")
+    
+    def add_pokemon_to_list(self):
+        """Add new Pokemon to the normal list"""
+        pokemon_input = self.pokemon_input_var.get().strip()
+        if not pokemon_input:
+            from tkinter import messagebox
+            messagebox.showwarning("Invalid Input", "Please enter Pokemon name(s)!")
+            return
+        
+        # Get current list from auto hunt engine
+        current_list = self.auto_hunt_engine.normal_pokemon_list.copy()
+        
+        # Parse input (handle comma-separated names)
+        new_pokemon = [name.strip().lower() for name in pokemon_input.split(',') if name.strip()]
+        
+        # Add new Pokemon to list (avoid duplicates)
+        added_count = 0
+        for pokemon in new_pokemon:
+            if pokemon not in current_list:
+                current_list.append(pokemon)
+                added_count += 1
+        
+        # Update the auto hunt engine
+        self.auto_hunt_engine.update_normal_pokemon_list(current_list)
+        
+        # Update UI display
+        self.update_pokemon_list_display()
+        
+        # Clear input
+        self.pokemon_input_var.set("")
+        
+        # Show confirmation
+        from tkinter import messagebox
+        if added_count > 0:
+            messagebox.showinfo("Success", f"Added {added_count} Pokemon to the normal list!")
+        else:
+            messagebox.showinfo("Info", "All Pokemon were already in the list.")
+
+    def reset_pokemon_list(self):
+        """Reset Pokemon list to default values from the encounter table"""
+        from tkinter import messagebox
+        result = messagebox.askyesno("Reset Pokemon List", 
+                                   "Reset to default Pokemon list from your encounter table?\n\n"
+                                   "This will replace the current list with:\n"
+                                   "sentret, pidgey, pidgeotto, hoppip, meowth, persian, psyduck, slowpoke")
+        
+        if result:
+            # Default list based on the user's encounter table image
+            default_list = ['sentret', 'pidgey', 'pidgeotto', 'hoppip', 'meowth', 'persian', 'psyduck', 'slowpoke']
+            
+            # Update the auto hunt engine
+            self.auto_hunt_engine.update_normal_pokemon_list(default_list)
+            
+            # Update UI display
+            self.update_pokemon_list_display()
+            
+            messagebox.showinfo("Success", "Pokemon list reset to default values!")
+
+    def update_pokemon_list_display(self):
+        """Update the UI display of the current Pokemon list"""
+        current_list = self.auto_hunt_engine.normal_pokemon_list
+        display_text = ", ".join(current_list)
+        self.current_pokemon_label.config(text=display_text)
+        
+        print(f"🎯 Updated Pokemon list display: {display_text}")
+
+    def remove_pokemon_from_list(self, pokemon_name):
+        """Remove a Pokemon from the normal list"""
+        current_list = self.auto_hunt_engine.normal_pokemon_list.copy()
+        pokemon_lower = pokemon_name.lower()
+        
+        if pokemon_lower in current_list:
+            current_list.remove(pokemon_lower)
+            self.auto_hunt_engine.update_normal_pokemon_list(current_list)
+            self.update_pokemon_list_display()
+            return True
+        return False
+
+class DetectionAreaSelector:
+    """Interactive overlay for selecting Pokemon detection area"""
+    
+    def __init__(self, auto_hunt_engine):
+        self.auto_hunt_engine = auto_hunt_engine
+        self.root = None
+        self.canvas = None
+        self.start_x = None
+        self.start_y = None
+        self.rect_id = None
+        self.screenshot = None
+        self.photo = None
+        
+    def show(self):
+        """Show the area selection overlay"""
+        import tkinter as tk
+        from tkinter import messagebox
+        from PIL import Image, ImageTk
+        
+        # Capture current screen
+        screenshot = self.auto_hunt_engine.capture_full_game_screen()
+        if screenshot is None:
+            messagebox.showerror("Error", "Could not capture game screen. Make sure PokeMMO is running.")
+            return
+        
+        self.screenshot = screenshot
+        
+        # Convert OpenCV image to PIL
+        import cv2
+        screenshot_rgb = cv2.cvtColor(screenshot, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(screenshot_rgb)
+        
+        # Get original dimensions
+        orig_width, orig_height = pil_image.size
+        
+        # Scale down for display if too large
+        max_display_size = 1200
+        if orig_width > max_display_size or orig_height > max_display_size:
+            ratio = min(max_display_size / orig_width, max_display_size / orig_height)
+            display_width = int(orig_width * ratio)
+            display_height = int(orig_height * ratio)
+            display_image = pil_image.resize((display_width, display_height), Image.Resampling.LANCZOS)
+        else:
+            display_image = pil_image
+            display_width, display_height = orig_width, orig_height
+        
+        # Store scaling ratio for coordinate conversion
+        self.scale_x = orig_width / display_width
+        self.scale_y = orig_height / display_height
+        
+        print(f"🔍 Image scaling info:")
+        print(f"   Original size: {orig_width}x{orig_height}")
+        print(f"   Display size: {display_width}x{display_height}")
+        print(f"   Scale factors: {self.scale_x:.3f}x, {self.scale_y:.3f}y")
+        
+        # Create overlay window
+        self.root = tk.Toplevel()
+        self.root.title("🎯 Select Pokemon Detection Area")
+        self.root.attributes('-topmost', True)
+        self.root.resizable(False, False)
+        
+        # Instructions frame
+        instructions_frame = tk.Frame(self.root, bg='#2a2a2a')
+        instructions_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Label(instructions_frame, 
+                text="📋 Instructions:", 
+                font=('Segoe UI', 12, 'bold'), 
+                fg='#ffffff', bg='#2a2a2a').pack(anchor='w')
+        
+        instructions = [
+            "1. Drag to select the area where Pokemon names appear",
+            "2. Include the area where you see 'Pidgeotto Lv.XX' text",
+            "3. Make sure to cover the full name area (left side of screen)",
+            "4. Click 'Save Area' when satisfied with selection",
+            "5. Use '🔍 Test Selected Area' to verify detection"
+        ]
+        
+        for instruction in instructions:
+            tk.Label(instructions_frame, 
+                    text=instruction, 
+                    font=('Segoe UI', 9), 
+                    fg='#bdc3c7', bg='#2a2a2a').pack(anchor='w', padx=20)
+        
+        # Canvas for image and selection
+        self.canvas = tk.Canvas(self.root, 
+                               width=display_width, 
+                               height=display_height,
+                               bg='black',
+                               highlightthickness=0)
+        self.canvas.pack(padx=10, pady=(0, 10))
+        
+        # Convert PIL image to tkinter PhotoImage
+        self.photo = ImageTk.PhotoImage(display_image)
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
+        
+        # Bind mouse events
+        self.canvas.bind('<Button-1>', self.on_click)
+        self.canvas.bind('<B1-Motion>', self.on_drag)
+        self.canvas.bind('<ButtonRelease-1>', self.on_release)
+        
+        # Buttons frame
+        buttons_frame = tk.Frame(self.root, bg='#2a2a2a')
+        buttons_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        
+        tk.Button(buttons_frame, text="💾 Save Area", 
+                 command=self.save_area,
+                 font=('Segoe UI', 10, 'bold'),
+                 fg='#ffffff', bg='#28a745',
+                 activeforeground='#ffffff', activebackground='#1e7e34',
+                 relief=tk.RAISED, bd=2, pady=8).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        
+        tk.Button(buttons_frame, text="❌ Cancel", 
+                 command=self.cancel,
+                 font=('Segoe UI', 10, 'bold'),
+                 fg='#ffffff', bg='#dc3545',
+                 activeforeground='#ffffff', activebackground='#c82333',
+                 relief=tk.RAISED, bd=2, pady=8).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
+        
+        # Current selection display
+        self.selection_label = tk.Label(self.root, 
+                                       text="🎯 Drag to select detection area", 
+                                       font=('Segoe UI', 9), 
+                                       fg='#ffc107', bg='#2a2a2a')
+        self.selection_label.pack(pady=(0, 10))
+        
+        # Center window on screen
+        self.root.update_idletasks()
+        width = self.root.winfo_width()
+        height = self.root.winfo_height()
+        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.root.winfo_screenheight() // 2) - (height // 2)
+        self.root.geometry(f'{width}x{height}+{x}+{y}')
+        
+    def on_click(self, event):
+        """Handle mouse click - start selection"""
+        self.start_x = event.x
+        self.start_y = event.y
+        
+        # Remove previous rectangle if exists
+        if self.rect_id:
+            self.canvas.delete(self.rect_id)
+    
+    def on_drag(self, event):
+        """Handle mouse drag - update selection rectangle"""
+        if self.start_x is not None and self.start_y is not None:
+            # Remove previous rectangle
+            if self.rect_id:
+                self.canvas.delete(self.rect_id)
+            
+            # Draw new rectangle
+            self.rect_id = self.canvas.create_rectangle(
+                self.start_x, self.start_y, event.x, event.y,
+                outline='#ff0000', width=3, dash=(5, 5)
+            )
+            
+            # Calculate actual area dimensions (in original image coordinates)
+            display_width = abs(event.x - self.start_x)
+            display_height = abs(event.y - self.start_y)
+            actual_width = int(display_width * self.scale_x)
+            actual_height = int(display_height * self.scale_y)
+            
+            self.selection_label.config(
+                text=f"🎯 Selection: {actual_width}x{actual_height} pixels"
+            )
+    
+    def on_release(self, event):
+        """Handle mouse release - finalize selection"""
+        if self.start_x is not None and self.start_y is not None:
+            # Calculate final rectangle in display coordinates
+            left = min(self.start_x, event.x)
+            top = min(self.start_y, event.y)
+            right = max(self.start_x, event.x)
+            bottom = max(self.start_y, event.y)
+            
+            # Convert to original image coordinates
+            self.selected_area = (
+                int(left * self.scale_x),
+                int(top * self.scale_y),
+                int(right * self.scale_x),
+                int(bottom * self.scale_y)
+            )
+            
+            # Calculate actual area dimensions (in original image coordinates)
+            actual_width = self.selected_area[2] - self.selected_area[0]
+            actual_height = self.selected_area[3] - self.selected_area[1]
+            
+            self.selection_label.config(
+                text=f"✅ Selected: {actual_width}x{actual_height} pixels - Click 'Save Area' to confirm"
+            )
+    
+    def save_area(self):
+        """Save the selected area as custom detection coordinates"""
+        if not hasattr(self, 'selected_area'):
+            from tkinter import messagebox
+            messagebox.showwarning("No Selection", "Please drag to select an area first.")
+            return
+        
+        # Save to auto hunt engine
+        self.auto_hunt_engine.custom_detection_area = self.selected_area
+        
+        left, top, right, bottom = self.selected_area
+        width = right - left
+        height = bottom - top
+        
+        print(f"✅ Saved custom detection area: ({left}, {top}) to ({right}, {bottom})")
+        print(f"   Area size: {width}x{height} pixels (original image coordinates)")
+        
+        from tkinter import messagebox
+        messagebox.showinfo("Area Saved", 
+                           f"✅ Detection area saved!\n\n"
+                           f"Coordinates: ({left}, {top}) to ({right}, {bottom})\n"
+                           f"Size: {width}x{height} pixels\n\n"
+                           f"Note: These are the actual coordinates in the game image.\n"
+                           f"Use '🔍 Test Selected Area' to verify OCR detection.")
+        
+        self.root.destroy()
+    
+    def cancel(self):
+        """Cancel area selection"""
+        self.root.destroy()
 
 def print_header():
     """Print application header and instructions"""
