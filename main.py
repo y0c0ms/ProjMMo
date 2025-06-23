@@ -1066,6 +1066,32 @@ class PokeMMOOverlay:
                  activeforeground='#ffffff', activebackground='#6c5ce7',
                  relief=tk.RAISED, bd=1, pady=6).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
         
+        # Fourth row for sprite testing
+        test_button_row4 = tk.Frame(test_frame, bg='#2a2a2a')
+        test_button_row4.pack(fill=tk.X, padx=10, pady=(5, 8))
+        
+        # Debug Options section
+        debug_frame = tk.Frame(test_frame, bg='#2a2a2a')
+        debug_frame.pack(fill=tk.X, padx=10, pady=(5, 8))
+        
+        # Debug checkbox for pokecenter escape
+        self.debug_pokecenter_auto_hunt_var = tk.BooleanVar(value=False)
+        debug_checkbox = tk.Checkbutton(debug_frame, 
+                                       text="🔧 Enable Pokecenter Escape Debug", 
+                                       variable=self.debug_pokecenter_auto_hunt_var,
+                                       command=self.update_auto_hunt_debug_config,
+                                       font=('Segoe UI', 9),
+                                       fg='#ffffff', bg='#2a2a2a',
+                                       activeforeground='#ffffff', activebackground='#2a2a2a',
+                                       selectcolor='#34495e')
+        debug_checkbox.pack(anchor=tk.W, pady=2)
+        
+        # Debug explanation
+        tk.Label(debug_frame, 
+                text="💡 Enable this if you get stuck in Pokecenter animations or transitions", 
+                font=('Segoe UI', 7), 
+                fg='#95a5a6', bg='#2a2a2a').pack(anchor=tk.W, padx=20)
+        
         # Pokemon List Management section
         pokemon_frame = tk.Frame(scrollable_frame, bg='#2a2a2a', relief=tk.RAISED, bd=1)
         pokemon_frame.pack(fill=tk.X, pady=(0, 10))
@@ -3111,6 +3137,19 @@ class PokeMMOOverlay:
             self.update_pokemon_list_display()
             return True
         return False
+
+    def update_auto_hunt_debug_config(self):
+        """Update Auto Hunt debug configuration"""
+        try:
+            debug_enabled = self.debug_pokecenter_auto_hunt_var.get()
+            
+            # Set debug flag in auto hunt engine
+            if hasattr(self.auto_hunt_engine, 'set_debug_pokecenter_escape'):
+                self.auto_hunt_engine.set_debug_pokecenter_escape(debug_enabled)
+                print(f"🔧 Auto Hunt Pokecenter Debug: {'Enabled' if debug_enabled else 'Disabled'}")
+            
+        except Exception as e:
+            print(f"❌ Error updating auto hunt debug config: {e}")
 
 class DetectionAreaSelector:
     """Interactive overlay for selecting Pokemon detection area"""

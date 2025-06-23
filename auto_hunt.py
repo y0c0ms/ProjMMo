@@ -70,6 +70,16 @@ class AutoHuntEngine:
         self.horde_encounters_found = 0
         self.last_detected_pokemon = ""
         self.last_encounter_type = "normal"  # normal, special, shiny, horde
+        
+        # NEW: Sprite detection system
+        self.sprite_dir = "sprites"
+        self.pokemon_sprites = {}  # Will store loaded Pokemon sprites
+        self.sprite_threshold = 0.6  # Lower threshold for game screenshot sprites (more lenient)
+        # Removed sprite_scales - no longer needed for game screenshot sprites
+        self.load_pokemon_sprites()
+        
+        # Debug pokecenter escape detection
+        self.debug_pokecenter_escape = False
     
     def ensure_screenshot_directory(self):
         """Create screenshots directory if it doesn't exist"""
@@ -425,10 +435,18 @@ class AutoHuntEngine:
         best_template = ""
         
         for template_name in self.templates.keys():
+            # Check template size first to avoid OpenCV errors
+            template = self.templates[template_name]
+            screenshot_h, screenshot_w = screenshot.shape[:2]
+            template_h, template_w = template.shape[:2]
+            
+            if template_h > screenshot_h or template_w > screenshot_w:
+                print(f"⚠ Template '{template_name}' ({template_w}x{template_h}) is larger than screenshot ({screenshot_w}x{screenshot_h}) - skipping")
+                continue
+            
             matched, location = self.detect_template(screenshot, template_name)
             
             # Get the actual confidence score for debugging
-            template = self.templates[template_name]
             try:
                 result = cv2.matchTemplate(screenshot, template, cv2.TM_CCOEFF_NORMED)
                 min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
@@ -1936,76 +1954,52 @@ class AutoHuntEngine:
 
     def analyze_encounter_for_pokemon(self, screenshot: np.ndarray) -> Tuple[bool, str]:
         """
-        Analyze encounter for Pokemon names and determine action
+        Analyze encounter for Pokemon using simple OCR detection (same as working test button)
         Returns: (should_continue_hunt, encounter_type)
         """
-        print("🔍 Analyzing encounter for Pokemon names...")
+        print("🔍 Analyzing encounter using simple OCR method...")
         
-        # Detect Pokemon names from top screen area with retry logic
-        pokemon_names, is_horde, contains_shiny = self.detect_pokemon_names_top_screen(screenshot, max_retries=3)
+        # SAFETY FIX: Press A key to ensure we are on the FIGHT button
+        # This prevents the cursor from being on BAG/Pokemon/RUN due to previous key presses
+        print("Safety: Pressing A to ensure FIGHT button is selected...")
+        self.input_manager.press_key("a")
+        time.sleep(0.1)
+        self.input_manager.release_key("a")
+        time.sleep(0.3)  # Short delay to let the menu cursor reset
         
-        if not pokemon_names:
-            print("⚠️ Could not detect Pokemon names - treating as normal encounter")
-            return True, "unknown"
-        
-        print(f"🔍 Checking detected Pokemon: {pokemon_names}")
-        print(f"🔍 Against normal list: {self.normal_pokemon_list}")
-        
-        # Determine encounter type and action
-        if is_horde:
-            self.horde_encounters_found += 1
-            self.last_encounter_type = "horde"
-            # Get unique Pokemon names for display
-            unique_names = list(set(pokemon_names))
-            # Count each unique Pokemon
-            name_counts = {}
-            for name in pokemon_names:
-                name_counts[name] = name_counts.get(name, 0) + 1
+        try:
+            # Use the simple OCR method (same logic as working test button) 
+            pokemon_name, confidence, is_shiny, is_horde = self.detect_pokemon_simple_ocr_enhanced(screenshot)
             
-            horde_description = ", ".join([f"{count}x {name}" for name, count in name_counts.items()])
-            self.last_detected_pokemon = f"Horde: {horde_description}"
-            print(f"🎯 HORDE ENCOUNTER detected: {horde_description}")
-            return True, "horde"  # Continue hunt but with special sequence
-        
-        # Check for shiny
-        if contains_shiny:
-            self.shiny_encounters_found += 1
-            self.last_encounter_type = "shiny"
-            unique_names = list(set(pokemon_names))
-            self.last_detected_pokemon = f"Shiny: {', '.join(unique_names)}"
-            print(f"✨ SHINY ENCOUNTER detected: {unique_names}")
-            self.handle_special_encounter(unique_names, True, screenshot)
-            return False, "shiny"  # Pause hunt
-        
-        # Check if ALL detected Pokemon are in the normal list
-        unique_pokemon = list(set(pokemon_names))  # Get unique names only
-        all_normal = True
-        special_pokemon = []
-        
-        for name in unique_pokemon:
-            name_is_normal = False
-            for normal_pokemon in self.normal_pokemon_list:
-                if self.is_pokemon_name_match(normal_pokemon, name):
-                    name_is_normal = True
-                    break
-            if not name_is_normal:
-                all_normal = False
-                special_pokemon.append(name)
-        
-        if not all_normal:
-            # At least one Pokemon is not in normal list - special encounter
-            self.special_encounters_found += 1
-            self.last_encounter_type = "special"
-            self.last_detected_pokemon = f"Special: {', '.join(special_pokemon)}"
-            print(f"🎯 SPECIAL ENCOUNTER detected: {special_pokemon}")
-            self.handle_special_encounter(special_pokemon, False, screenshot)
-            return False, "special"  # Pause hunt
-        
-        # All Pokemon are normal
-        self.last_encounter_type = "normal"
-        self.last_detected_pokemon = ', '.join(unique_pokemon)
-        print(f"✅ Normal encounter: {unique_pokemon} (all found in normal list)")
-        return True, "normal"
+            if pokemon_name:
+                print(f"✅ Pokemon detected: {pokemon_name} (confidence: {confidence:.3f})")
+                
+                # Check if this is a target Pokemon
+                is_target = pokemon_name.lower() not in self.normal_pokemon_list
+                
+                if is_horde:
+                    print(f"🎯 HORDE encounter detected: {pokemon_name}")
+                    print("🎮 Executing horde sequence (D-S-E)...")
+                    self.execute_horde_sequence()
+                    return True, "🎯 HORDE"
+                elif is_shiny:
+                    print(f"✨ SHINY {pokemon_name.upper()} detected!")
+                    self.handle_special_encounter([pokemon_name], True, screenshot)
+                    return False, "✨ SHINY"
+                elif is_target:
+                    print(f"🎯 TARGET Pokemon: {pokemon_name}")
+                    self.handle_special_encounter([pokemon_name], False, screenshot)
+                    return False, "🎯 TARGET"
+                else:
+                    print(f"🔄 Normal Pokemon: {pokemon_name} - continuing hunt")
+                    return True, "🔄 NORMAL"
+            else:
+                print(f"❌ No Pokemon detected via OCR - continuing hunt")
+                return True, "❓ UNKNOWN"
+                
+        except Exception as e:
+            print(f"❌ Error in OCR encounter analysis: {e}")
+            return True, "❌ ERROR"
 
     def is_pokemon_name_match(self, pokemon_name: str, detected_name: str) -> bool:
         """Check if a detected name matches a Pokemon name (bidirectional fuzzy matching)"""
@@ -2194,6 +2188,383 @@ class AutoHuntEngine:
             print(f"❌ Error in fast battle menu detection: {e}")
             return False
 
+    # ===========================================
+    # SPRITE-BASED POKEMON DETECTION SYSTEM
+    # ===========================================
+    
+    def load_pokemon_sprites(self):
+        """Load Pokemon sprite images for recognition (normal versions only)"""
+        import os
+        import glob
+        
+        if not os.path.exists(self.sprite_dir):
+            print(f"❌ Sprites directory not found: {self.sprite_dir}")
+            print(f"💡 Create the directory and add your Pokemon sprite PNG files")
+            return False
+        
+        self.pokemon_sprites = {}
+        sprite_count = 0
+        total_size = 0
+        
+        print(f"🔄 Loading Pokemon sprites from {self.sprite_dir}...")
+        
+        # Load only normal Pokemon sprites (not shiny versions)
+        for sprite_file in glob.glob(os.path.join(self.sprite_dir, "*.png")):
+            filename = os.path.basename(sprite_file)
+            sprite_name = os.path.splitext(filename)[0].lower()
+            
+            # Skip shiny sprites and special files - we only want normal versions for matching
+            if any(keyword in sprite_name.lower() for keyword in ['shiny', 'example', 'horde']):
+                print(f"   ⏭️ Skipping: {filename} (contains excluded keyword)")
+                continue
+            
+            # Load the sprite image
+            sprite_image = cv2.imread(sprite_file, cv2.IMREAD_COLOR)
+            if sprite_image is not None:
+                sprite_h, sprite_w = sprite_image.shape[:2]
+                file_size = os.path.getsize(sprite_file)
+                total_size += file_size
+                
+                self.pokemon_sprites[sprite_name] = sprite_image
+                sprite_count += 1
+                
+                # Format file size for display
+                if file_size > 1024:
+                    size_str = f"{file_size/1024:.1f}KB"
+                else:
+                    size_str = f"{file_size}B"
+                
+                print(f"   ✓ Loaded: {sprite_name} ({sprite_w}x{sprite_h}, {size_str})")
+            else:
+                print(f"   ❌ Failed to load: {filename}")
+        
+        # Summary
+        total_size_str = f"{total_size/1024:.1f}KB" if total_size > 1024 else f"{total_size}B"
+        print(f"\n🎯 Sprite Loading Complete:")
+        print(f"   📊 Loaded {sprite_count} Pokemon sprites")
+        print(f"   💾 Total size: {total_size_str}")
+        print(f"   🎮 Ready for game screenshot detection")
+        
+        if sprite_count == 0:
+            print(f"   ⚠️ No valid sprites found!")
+            print(f"   💡 Add Pokemon screenshot PNG files to sprites/ folder")
+            print(f"   💡 Avoid files with 'shiny', 'example', or 'horde' in the name")
+        
+        return sprite_count > 0
+
+    def detect_pokemon_by_sprite(self, screenshot: np.ndarray) -> Tuple[Optional[str], float, bool]:
+        """
+        Detect Pokemon using sprite recognition with flexible size handling for game screenshots
+        Returns: (pokemon_name, confidence, is_shiny)
+        """
+        if not self.pokemon_sprites:
+            print("❌ No Pokemon sprites loaded")
+            return None, 0.0, False
+        
+        try:
+            # Use custom detection area if available, otherwise use default battle areas
+            if hasattr(self, 'custom_detection_area') and self.custom_detection_area:
+                x1, y1, x2, y2 = self.custom_detection_area
+                battle_areas = [(x1, y1, x2, y2)]
+                area_names = ["Custom-Selected"]
+                print(f"🎯 Using custom detection area: ({x2-x1}x{y2-y1}) at ({x1},{y1})")
+            else:
+                # Default battle areas where Pokemon sprites appear
+                battle_areas = [
+                    # Center area (where most enemy Pokemon appear)
+                    (200, 100, 800, 500),
+                    # Left-center area (alternative position)
+                    (100, 150, 700, 450),
+                    # Upper area (for flying Pokemon or special positions)
+                    (150, 50, 750, 350),
+                    # Full left half (comprehensive search)
+                    (0, 0, screenshot.shape[1] // 2, screenshot.shape[0]),
+                    # Full screen search (last resort, slower)
+                    (0, 0, screenshot.shape[1], screenshot.shape[0])
+                ]
+                area_names = ["Center", "Left-Center", "Upper", "Left-Half", "Full-Screen"]
+                print(f"🔍 Using default battle areas (no custom area selected)")
+            
+            best_match = None
+            best_confidence = 0.0
+            best_location = None
+            best_area = None
+            all_confidences = {}  # Track all confidence scores
+            
+            print(f"🔍 Testing {len(self.pokemon_sprites)} Pokemon sprites against {len(battle_areas)} battle areas...")
+            
+            # Try each battle area
+            for area_idx, (x1, y1, x2, y2) in enumerate(battle_areas):
+                # Ensure coordinates are within screenshot bounds
+                x1 = max(0, min(x1, screenshot.shape[1]))
+                y1 = max(0, min(y1, screenshot.shape[0]))
+                x2 = max(x1, min(x2, screenshot.shape[1]))
+                y2 = max(y1, min(y2, screenshot.shape[0]))
+                
+                # Extract battle area from screenshot
+                battle_region = screenshot[y1:y2, x1:x2]
+                
+                if battle_region.size == 0:
+                    continue
+                
+                area_name = area_names[area_idx] if area_idx < len(area_names) else f"Area-{area_idx}"
+                print(f"   🎯 Searching {area_name} area ({x2-x1}x{y2-y1})...")
+                
+                # Try to match each Pokemon sprite in this area
+                for pokemon_name, sprite_template in self.pokemon_sprites.items():
+                    try:
+                        sprite_h, sprite_w = sprite_template.shape[:2]
+                        
+                        # Skip if sprite template is larger than the search region
+                        if (sprite_h > battle_region.shape[0] or 
+                            sprite_w > battle_region.shape[1]):
+                            continue
+                        
+                        # Perform template matching with the original sprite size
+                        result = cv2.matchTemplate(battle_region, sprite_template, cv2.TM_CCOEFF_NORMED)
+                        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+                        
+                        # Store confidence for reporting
+                        area_pokemon_key = f"{area_name}_{pokemon_name}"
+                        all_confidences[area_pokemon_key] = max_val
+                        
+                        # Check if this is the best match so far
+                        if max_val > best_confidence:
+                            best_match = pokemon_name
+                            best_confidence = max_val
+                            best_location = (x1 + max_loc[0], y1 + max_loc[1])
+                            best_area = area_name
+                            
+                    except Exception as e:
+                        continue  # Skip this sprite if matching fails
+            
+            # Report all confidence scores
+            print(f"\n📊 Sprite Detection Results:")
+            print(f"   Total sprites tested: {len(self.pokemon_sprites)}")
+            
+            # Sort by confidence and show top results
+            sorted_confidences = sorted(all_confidences.items(), key=lambda x: x[1], reverse=True)
+            
+            print(f"   🥇 Top 5 confidence scores:")
+            for i, (sprite_key, confidence) in enumerate(sorted_confidences[:5]):
+                area, pokemon = sprite_key.split('_', 1)
+                status = "✅" if confidence > self.sprite_threshold else "❌"
+                print(f"      {i+1}. {status} {pokemon} in {area}: {confidence:.3f}")
+            
+            if best_match and best_confidence > self.sprite_threshold:
+                print(f"\n🎯 🏆 BEST MATCH: {best_match} (confidence: {best_confidence:.3f}) in {best_area}")
+                
+                # Check if this Pokemon is shiny using OCR
+                is_shiny = self.detect_shiny_text_near_sprite(screenshot, best_location)
+                
+                if is_shiny:
+                    print(f"✨ SHINY {best_match.upper()} detected!")
+                
+                return best_match, best_confidence, is_shiny
+            else:
+                print(f"\n❌ No Pokemon sprite matches found above threshold ({self.sprite_threshold})")
+                if sorted_confidences:
+                    best_area_pokemon, best_overall_conf = sorted_confidences[0]
+                    area, pokemon = best_area_pokemon.split('_', 1)
+                    print(f"   💡 Best overall: {pokemon} ({best_overall_conf:.3f}) - below threshold")
+                    print(f"   💡 Consider lowering sprite threshold if this should match")
+                
+                return None, 0.0, False
+                
+        except Exception as e:
+            print(f"❌ Error in sprite detection: {e}")
+            return None, 0.0, False
+
+    def detect_shiny_text_near_sprite(self, screenshot: np.ndarray, sprite_location: Tuple[int, int]) -> bool:
+        """
+        Detect if 'Shiny' text appears near the detected Pokemon sprite
+        """
+        try:
+            # Define area around the sprite to look for "Shiny" text
+            # Usually appears above or to the left of the Pokemon sprite
+            x, y = sprite_location
+            
+            # Search areas around the sprite location
+            search_areas = [
+                # Above the sprite (most common location for "Shiny" text)
+                (max(0, x - 300), max(0, y - 150), min(screenshot.shape[1], x + 300), y + 50),
+                # To the left of sprite  
+                (max(0, x - 400), max(0, y - 100), x + 50, min(screenshot.shape[0], y + 200)),
+                # General area around sprite (wider search)
+                (max(0, x - 350), max(0, y - 120), min(screenshot.shape[1], x + 350), min(screenshot.shape[0], y + 120)),
+                # Full top area of screen (for centered shiny text)
+                (0, 0, screenshot.shape[1], screenshot.shape[0] // 3)
+            ]
+            
+            for area_x1, area_y1, area_x2, area_y2 in search_areas:
+                # Extract search region
+                search_region = screenshot[area_y1:area_y2, area_x1:area_x2]
+                
+                if search_region.size == 0:
+                    continue
+                
+                # Convert to RGB for OCR
+                region_rgb = cv2.cvtColor(search_region, cv2.COLOR_BGR2RGB)
+                pil_region = Image.fromarray(region_rgb)
+                
+                # Enhance contrast for better OCR
+                from PIL import ImageEnhance
+                enhancer = ImageEnhance.Contrast(pil_region.convert('L'))
+                enhanced = enhancer.enhance(3.0)
+                
+                # Multiple OCR configurations for better detection
+                ocr_configs = [
+                    r'--oem 3 --psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',
+                    r'--oem 3 --psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',
+                    r'--oem 3 --psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '
+                ]
+                
+                for config in ocr_configs:
+                    try:
+                        ocr_text = pytesseract.image_to_string(enhanced, config=config).strip().lower()
+                        
+                        # Check for shiny indicators (including common OCR mistakes)
+                        shiny_indicators = ['shiny', 'shimy', 'shinny', 'shine', 'shni', 'shiny.', 'shiny ']
+                        
+                        for indicator in shiny_indicators:
+                            if indicator in ocr_text:
+                                print(f"✨ Shiny text detected: '{ocr_text}' (matched: '{indicator}')")
+                                return True
+                                
+                    except Exception as e:
+                        continue  # Skip this config if OCR fails
+            
+            return False
+            
+        except Exception as e:
+            print(f"❌ Error in shiny text detection: {e}")
+            return False
+
+    def analyze_encounter_by_sprite(self, screenshot: np.ndarray) -> Tuple[bool, str, bool, float]:
+        """
+        Analyze encounter using sprite recognition
+        Returns: (should_continue_hunting, encounter_type, is_shiny, confidence)
+        """
+        try:
+            # Detect Pokemon using sprite matching
+            pokemon_name, confidence, is_shiny = self.detect_pokemon_by_sprite(screenshot)
+            
+            if not pokemon_name:
+                # No Pokemon detected - might be a loading screen or error
+                print("⚠️ No Pokemon sprite detected - continuing hunt")
+                return True, "unknown", False, 0.0
+            
+            # Check encounter type
+            encounter_type = "normal"
+            should_continue = True
+            
+            if is_shiny:
+                encounter_type = "shiny"
+                should_continue = False  # Stop hunting for shiny
+                print(f"🛑 SHINY {pokemon_name.upper()} encounter - stopping hunt!")
+                
+            elif pokemon_name.lower() in ['moltres', 'articuno', 'entei', 'zapdos', 'suicune', 'raikou']:
+                encounter_type = "legendary" 
+                should_continue = False  # Stop hunting for legendary
+                print(f"🛑 LEGENDARY {pokemon_name.upper()} encounter - stopping hunt!")
+                
+            elif pokemon_name.lower() not in [p.lower() for p in self.normal_pokemon_list]:
+                encounter_type = "special"
+                should_continue = False  # Stop hunting for special Pokemon
+                print(f"🛑 SPECIAL {pokemon_name.upper()} encounter - stopping hunt!")
+                
+            else:
+                # Normal Pokemon - continue hunting
+                print(f"✅ Normal {pokemon_name} encounter - continuing hunt")
+            
+            # Update statistics
+            self.last_detected_pokemon = pokemon_name
+            self.last_encounter_type = encounter_type
+            
+            if is_shiny:
+                self.shiny_encounters_found += 1
+            if encounter_type in ["special", "legendary"]:
+                self.special_encounters_found += 1
+            
+            # Save debug screenshot if it's a special encounter
+            if not should_continue:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"{encounter_type}_{pokemon_name}_{timestamp}"
+                self.save_debug_screenshot(screenshot, filename)
+            
+            return should_continue, encounter_type, is_shiny, confidence
+            
+        except Exception as e:
+            print(f"❌ Error in sprite-based encounter analysis: {e}")
+            return True, "error", False, 0.0
+
+    def detect_pokemon_sprite_based(self, screenshot: np.ndarray) -> Tuple[List[str], bool, bool]:
+        """
+        Main detection method using sprite recognition (replaces OCR-based detection)
+        Returns: (pokemon_names, is_horde, contains_shiny)
+        """
+        try:
+            # Use sprite detection
+            pokemon_name, confidence, is_shiny = self.detect_pokemon_by_sprite(screenshot)
+            
+            if pokemon_name:
+                # Return in the expected format for compatibility
+                return [pokemon_name], False, is_shiny  # Single Pokemon (sprites don't detect hordes), shiny status
+            else:
+                # No Pokemon detected
+                return [], False, False
+                
+        except Exception as e:
+            print(f"❌ Error in sprite-based Pokemon detection: {e}")
+            return [], False, False
+
+    def test_sprite_detection(self, screenshot: Optional[np.ndarray] = None) -> bool:
+        """Test the sprite detection system"""
+        print("🧪 Testing Pokemon sprite detection system...")
+        
+        if not screenshot:
+            # Capture current screen
+            screenshot = self.capture_full_game_screen()
+            if screenshot is None:
+                print("❌ Could not capture screenshot for testing")
+                return False
+        
+        print(f"📊 Loaded sprites: {len(self.pokemon_sprites)}")
+        for sprite_name in self.pokemon_sprites.keys():
+            print(f"   - {sprite_name}")
+        
+        print(f"🔧 Detection settings:")
+        print(f"   - Sprite threshold: {self.sprite_threshold}")
+        # Removed sprite_scales - no longer needed for game screenshot sprites
+        
+        # Test sprite detection
+        pokemon_name, confidence, is_shiny = self.detect_pokemon_by_sprite(screenshot)
+        
+        print(f"\n🎯 Final Detection Result:")
+        if pokemon_name:
+            print(f"   🏆 Pokemon: {pokemon_name}")
+            print(f"   📊 Confidence: {confidence:.3f}")
+            print(f"   ✨ Is Shiny: {is_shiny}")
+            print(f"   🎮 Status: {'✅ SUCCESS' if confidence > self.sprite_threshold else '⚠️ LOW CONFIDENCE'}")
+        else:
+            print("   ❌ No Pokemon detected")
+            print(f"   💡 Try lowering sprite threshold (current: {self.sprite_threshold})")
+        
+        # Test encounter analysis
+        should_continue, encounter_type, is_shiny_analysis, confidence_analysis = self.analyze_encounter_by_sprite(screenshot)
+        
+        print(f"\n📋 Encounter Analysis Summary:")
+        print(f"   🎯 Type: {encounter_type}")
+        print(f"   🔄 Should continue hunt: {should_continue}")
+        print(f"   ✨ Shiny detected: {is_shiny_analysis}")
+        print(f"   📊 Final confidence: {confidence_analysis:.3f}")
+        
+        return pokemon_name is not None
+
+    # ===========================================
+    # END SPRITE DETECTION SYSTEM
+    # ===========================================
+
     def test_pokemon_detection_fix(self):
         """Test the improved Pokemon detection to verify fixes"""
         print("🧪 Testing Pokemon detection improvements...")
@@ -2337,6 +2708,468 @@ class AutoHuntEngine:
                 
         except Exception as e:
             print(f"❌ Error testing custom detection area: {e}")
+            return False
+
+    def detect_pokemon_split_method(self, screenshot: np.ndarray) -> Tuple[Optional[str], float, bool]:
+        """
+        Split detection method: OCR for left text area, sprite matching for right sprite area
+        Returns: (pokemon_name, confidence, is_shiny)
+        """
+        if not self.pokemon_sprites:
+            print("❌ No Pokemon sprites loaded")
+            return None, 0.0, False
+        
+        try:
+            # Use custom detection area if available, otherwise use default
+            if hasattr(self, 'custom_detection_area') and self.custom_detection_area:
+                x1, y1, x2, y2 = self.custom_detection_area
+                print(f"🎯 Using custom detection area: ({x2-x1}x{y2-y1}) at ({x1},{y1})")
+            else:
+                # Default area focusing on Pokemon encounter area
+                x1, y1, x2, y2 = 0, 0, screenshot.shape[1] // 2, screenshot.shape[0] // 2
+                print(f"🔍 Using default encounter area: ({x2-x1}x{y2-y1}) at ({x1},{y1})")
+            
+            # Extract the encounter region
+            encounter_region = screenshot[y1:y2, x1:x2]
+            region_height, region_width = encounter_region.shape[:2]
+            
+            # Validate minimum region size
+            min_width = 100  # Minimum width for meaningful detection
+            min_height = 50  # Minimum height for meaningful detection
+            
+            if region_width < min_width or region_height < min_height:
+                print(f"❌ Detection region too small: {region_width}x{region_height}")
+                print(f"   Minimum required: {min_width}x{min_height}")
+                print(f"   Current detection area: ({x2-x1}x{y2-y1}) at ({x1},{y1})")
+                print(f"   💡 Please select a larger detection area that covers both Pokemon name and sprite")
+                return None, 0.0, False
+            
+            # Split the region into LEFT (text) and RIGHT (sprite) areas
+            split_point = max(region_width // 2, 30)  # Ensure minimum 30px for each side
+            split_point = min(split_point, region_width - 30)  # Ensure at least 30px for right side
+            
+            left_text_area = encounter_region[:, :split_point]  # Left half for OCR
+            right_sprite_area = encounter_region[:, split_point:]  # Right half for sprite matching
+            
+            # Validate split areas
+            if left_text_area.shape[1] < 30 or right_sprite_area.shape[1] < 30:
+                print(f"❌ Split areas too narrow after division:")
+                print(f"   Left: {left_text_area.shape[1]}px, Right: {right_sprite_area.shape[1]}px")
+                print(f"   Region width: {region_width}px - need at least 60px total")
+                return None, 0.0, False
+            
+            print(f"📍 Split detection areas:")
+            print(f"   📝 Text area (LEFT): {left_text_area.shape[1]}x{left_text_area.shape[0]}")
+            print(f"   🎮 Sprite area (RIGHT): {right_sprite_area.shape[1]}x{right_sprite_area.shape[0]}")
+            print(f"   🔄 Split point: {split_point}/{region_width} pixels")
+            
+            # Save debug images of split areas
+            self._debug_save_split_areas(left_text_area, right_sprite_area, "encounter_split")
+            
+            # === PART 1: OCR TEXT DETECTION (LEFT AREA) ===
+            print(f"\n📝 STEP 1: OCR Text Detection on Left Area")
+            detected_text_names = self._detect_pokemon_names_ocr(left_text_area)
+            
+            # === PART 2: SPRITE DETECTION (RIGHT AREA) ===
+            print(f"\n🎮 STEP 2: Sprite Detection on Right Area")
+            sprite_results = self._detect_pokemon_sprites_area(right_sprite_area, "Right-Sprite")
+            
+            # === PART 3: COMBINE RESULTS ===
+            print(f"\n🔗 STEP 3: Combining OCR and Sprite Results")
+            
+            # Find best matches
+            best_ocr_match = detected_text_names[0] if detected_text_names else None
+            best_sprite_match = sprite_results[0] if sprite_results else (None, 0.0)
+            best_sprite_name, best_sprite_confidence = best_sprite_match
+            
+            print(f"   📝 OCR detected: {best_ocr_match}")
+            print(f"   🎮 Sprite detected: {best_sprite_name} (confidence: {best_sprite_confidence:.3f})")
+            
+            # Decision logic: prioritize matches that agree between OCR and sprite
+            final_pokemon = None
+            final_confidence = 0.0
+            method_used = "none"
+            
+            if best_ocr_match and best_sprite_name:
+                # Both methods found something - check if they agree
+                if best_ocr_match.lower() == best_sprite_name.lower():
+                    final_pokemon = best_ocr_match
+                    final_confidence = best_sprite_confidence + 0.2  # Bonus for agreement
+                    method_used = "ocr+sprite_agreement"
+                    print(f"   ✅ OCR and Sprite AGREE: {final_pokemon}")
+                elif best_sprite_confidence > 0.7:
+                    # High confidence sprite takes priority
+                    final_pokemon = best_sprite_name
+                    final_confidence = best_sprite_confidence
+                    method_used = "sprite_high_confidence"
+                    print(f"   🎮 Using high-confidence sprite: {final_pokemon}")
+                elif best_ocr_match:
+                    # Use OCR if sprite confidence is low
+                    final_pokemon = best_ocr_match
+                    final_confidence = 0.6  # Moderate confidence for OCR
+                    method_used = "ocr_fallback"
+                    print(f"   📝 Using OCR fallback: {final_pokemon}")
+            elif best_sprite_name and best_sprite_confidence > 0.6:
+                # Only sprite detection succeeded with decent confidence
+                final_pokemon = best_sprite_name
+                final_confidence = best_sprite_confidence
+                method_used = "sprite_only"
+                print(f"   🎮 Using sprite-only detection: {final_pokemon}")
+            elif best_ocr_match:
+                # Only OCR succeeded
+                final_pokemon = best_ocr_match
+                final_confidence = 0.5  # Lower confidence for OCR-only
+                method_used = "ocr_only"
+                print(f"   📝 Using OCR-only detection: {final_pokemon}")
+            
+            # Check for shiny if we have a Pokemon
+            is_shiny = False
+            if final_pokemon:
+                # Look for "shiny" in the left text area
+                is_shiny = self._detect_shiny_in_text_area(left_text_area)
+                if is_shiny:
+                    print(f"   ✨ SHINY {final_pokemon.upper()} detected via text analysis!")
+            
+            print(f"\n🏆 FINAL RESULT: {final_pokemon} (confidence: {final_confidence:.3f}, method: {method_used})")
+            
+            return final_pokemon, final_confidence, is_shiny
+            
+        except Exception as e:
+            print(f"❌ Error in split detection: {e}")
+            return None, 0.0, False
+
+    def _detect_pokemon_names_ocr(self, text_area: np.ndarray) -> List[str]:
+        """Extract Pokemon names from text area using OCR"""
+        try:
+            # Validate input
+            if text_area is None or text_area.size == 0:
+                print("   ❌ OCR: Empty text area provided")
+                return []
+            
+            if len(text_area.shape) != 3 or text_area.shape[2] != 3:
+                print(f"   ❌ OCR: Invalid image format: {text_area.shape}")
+                return []
+            
+            if text_area.shape[0] < 10 or text_area.shape[1] < 10:
+                print(f"   ❌ OCR: Text area too small: {text_area.shape[1]}x{text_area.shape[0]}")
+                return []
+            
+            # Convert to RGB for OCR
+            text_rgb = cv2.cvtColor(text_area, cv2.COLOR_BGR2RGB)
+            text_pil = Image.fromarray(text_rgb)
+            
+            # Apply contrast enhancement for better OCR
+            from PIL import ImageEnhance
+            enhancer = ImageEnhance.Contrast(text_pil.convert('L'))
+            enhanced = enhancer.enhance(2.5)
+            
+            # Multiple OCR configurations for Pokemon names
+            ocr_configs = [
+                r'--oem 3 --psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',
+                r'--oem 3 --psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',
+                r'--oem 3 --psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '
+            ]
+            
+            detected_names = []
+            for config in ocr_configs:
+                try:
+                    ocr_text = pytesseract.image_to_string(enhanced, config=config).strip().lower()
+                    
+                    # Extract Pokemon names from the text
+                    for pokemon in self.normal_pokemon_list:
+                        if pokemon.lower() in ocr_text:
+                            if pokemon not in detected_names:
+                                detected_names.append(pokemon)
+                                print(f"   📝 OCR found: {pokemon} in '{ocr_text}'")
+                    
+                except Exception:
+                    continue
+            
+            return detected_names[:3]  # Return top 3 matches
+            
+        except Exception as e:
+            print(f"❌ Error in OCR detection: {e}")
+            return []
+
+    def _detect_pokemon_sprites_area(self, sprite_area: np.ndarray, area_name: str) -> List[Tuple[str, float]]:
+        """Detect Pokemon sprites in a specific area, return list of (name, confidence) tuples"""
+        results = []
+        
+        try:
+            # Validate input
+            if sprite_area is None or sprite_area.size == 0:
+                print(f"   ❌ Sprite: Empty {area_name} area provided")
+                return []
+            
+            if len(sprite_area.shape) != 3 or sprite_area.shape[2] != 3:
+                print(f"   ❌ Sprite: Invalid image format for {area_name}: {sprite_area.shape}")
+                return []
+            
+            if sprite_area.shape[0] < 20 or sprite_area.shape[1] < 20:
+                print(f"   ❌ Sprite: {area_name} area too small: {sprite_area.shape[1]}x{sprite_area.shape[0]}")
+                return []
+            
+            print(f"   🔍 Testing {len(self.pokemon_sprites)} sprites in {area_name} area...")
+            
+            for pokemon_name, sprite_template in self.pokemon_sprites.items():
+                try:
+                    sprite_h, sprite_w = sprite_template.shape[:2]
+                    
+                    # Skip if sprite template is larger than the search area
+                    if (sprite_h > sprite_area.shape[0] or sprite_w > sprite_area.shape[1]):
+                        continue
+                    
+                    # Perform template matching
+                    result = cv2.matchTemplate(sprite_area, sprite_template, cv2.TM_CCOEFF_NORMED)
+                    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+                    
+                    results.append((pokemon_name, max_val))
+                    
+                except Exception:
+                    continue
+            
+            # Sort by confidence and show top results
+            results.sort(key=lambda x: x[1], reverse=True)
+            
+            print(f"   🥇 Top 3 sprite matches in {area_name}:")
+            for i, (pokemon, confidence) in enumerate(results[:3]):
+                status = "✅" if confidence > self.sprite_threshold else "❌"
+                print(f"      {i+1}. {status} {pokemon}: {confidence:.3f}")
+            
+            return results
+            
+        except Exception as e:
+            print(f"❌ Error detecting sprites in {area_name}: {e}")
+            return []
+
+    def _detect_shiny_in_text_area(self, text_area: np.ndarray) -> bool:
+        """Detect if 'Shiny' text appears in the text area"""
+        try:
+            # Validate input
+            if text_area is None or text_area.size == 0:
+                print("   ❌ Shiny OCR: Empty text area provided")
+                return False
+            
+            if len(text_area.shape) != 3 or text_area.shape[2] != 3:
+                print(f"   ❌ Shiny OCR: Invalid image format: {text_area.shape}")
+                return False
+            
+            if text_area.shape[0] < 10 or text_area.shape[1] < 10:
+                print(f"   ❌ Shiny OCR: Text area too small: {text_area.shape[1]}x{text_area.shape[0]}")
+                return False
+            
+            # Convert to RGB for OCR
+            text_rgb = cv2.cvtColor(text_area, cv2.COLOR_BGR2RGB)
+            text_pil = Image.fromarray(text_rgb)
+            
+            # Enhance contrast for better OCR
+            from PIL import ImageEnhance
+            enhancer = ImageEnhance.Contrast(text_pil.convert('L'))
+            enhanced = enhancer.enhance(3.0)
+            
+            # OCR configuration for shiny detection
+            config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '
+            ocr_text = pytesseract.image_to_string(enhanced, config=config).strip().lower()
+            
+            # Check for shiny indicators
+            shiny_indicators = ['shiny', 'shimy', 'shinny', 'shine']
+            for indicator in shiny_indicators:
+                if indicator in ocr_text:
+                    print(f"   ✨ Shiny indicator found: '{indicator}' in '{ocr_text}'")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"❌ Error in shiny text detection: {e}")
+            return False
+
+    def _debug_save_split_areas(self, left_text_area: np.ndarray, right_sprite_area: np.ndarray, prefix: str = "split_debug"):
+        """Save the split areas as debug images for troubleshooting"""
+        try:
+            import os
+            from datetime import datetime
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Save left text area
+            left_path = os.path.join(self.debug_dir, f"{prefix}_left_text_{timestamp}.png")
+            cv2.imwrite(left_path, left_text_area)
+            print(f"   💾 Saved left text area: {left_path}")
+            
+            # Save right sprite area  
+            right_path = os.path.join(self.debug_dir, f"{prefix}_right_sprite_{timestamp}.png")
+            cv2.imwrite(right_path, right_sprite_area)
+            print(f"   💾 Saved right sprite area: {right_path}")
+            
+            return left_path, right_path
+            
+        except Exception as e:
+            print(f"   ❌ Error saving debug split areas: {e}")
+            return None, None
+
+    def detect_pokemon_simple_ocr_enhanced(self, screenshot: np.ndarray) -> Tuple[Optional[str], float, bool, bool]:
+        """
+        Enhanced simple OCR-based detection with horde support
+        Returns: (pokemon_name, confidence, is_shiny, is_horde)
+        """
+        try:
+            import pytesseract
+            from PIL import Image, ImageEnhance
+            
+            # Use custom detection area if available, otherwise use default
+            if hasattr(self, 'custom_detection_area') and self.custom_detection_area:
+                left, top, right, bottom = self.custom_detection_area
+                print(f"🎯 Using custom detection area: ({right-left}x{bottom-top}) at ({left},{top})")
+                # Extract the custom area from screenshot - SAME AS WORKING METHOD
+                detection_region = screenshot[top:bottom, left:right]
+            else:
+                # Default area focusing on Pokemon encounter area (top-left portion)
+                height, width = screenshot.shape[:2]
+                left, top = 0, 0
+                right, bottom = width // 2, height // 2
+                print(f"🔍 Using default encounter area: ({right-left}x{bottom-top}) at ({left},{top})")
+                detection_region = screenshot[top:bottom, left:right]
+            
+            # Validate region size
+            if detection_region.shape[0] < 20 or detection_region.shape[1] < 20:
+                print(f"❌ Detection region too small: {detection_region.shape[1]}x{detection_region.shape[0]}")
+                return None, 0.0, False
+            
+            print(f"📍 Analyzing region: {detection_region.shape[1]}x{detection_region.shape[0]} pixels")
+            
+            # Convert to PIL for OCR - SAME AS WORKING METHOD
+            region_rgb = cv2.cvtColor(detection_region, cv2.COLOR_BGR2RGB)
+            pil_region = Image.fromarray(region_rgb)
+            
+            # Apply multiple OCR approaches - SAME AS WORKING METHOD
+            results = []
+            
+            # Enhanced contrast version
+            gray_image = pil_region.convert('L')
+            enhancer = ImageEnhance.Contrast(gray_image)
+            enhanced_image = enhancer.enhance(3.0)
+            
+            # Approach 1: High contrast with character filtering
+            config1 = r'--oem 3 --psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '
+            text1 = pytesseract.image_to_string(enhanced_image, config=config1).strip()
+            results.append(("High Contrast", text1))
+            
+            # Approach 2: Single line mode
+            config2 = r'--oem 3 --psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '
+            text2 = pytesseract.image_to_string(enhanced_image, config=config2).strip()
+            results.append(("Single Line", text2))
+            
+            # Approach 3: Raw text without enhancement
+            config3 = r'--oem 3 --psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '
+            text3 = pytesseract.image_to_string(pil_region, config=config3).strip()
+            results.append(("Raw Image", text3))
+            
+            print(f"\n📋 OCR Results:")
+            for approach, text in results:
+                print(f"   {approach}: '{text}'")
+            
+            # Use the SAME detection system as the working method
+            all_detected_text = " ".join([text for _, text in results if text])
+            
+            if all_detected_text:
+                print(f"\n🔍 Combined OCR text: '{all_detected_text}'")
+                
+                # Use the working detection methods - SAME AS WORKING METHOD
+                pokemon_names = self.extract_pokemon_names_working(all_detected_text)
+                
+                # Apply special Pokemon filtering - SAME AS WORKING METHOD
+                filtered_names, is_horde, contains_shiny = self.apply_special_pokemon_filter(pokemon_names, all_detected_text)
+                
+                print(f"\n🎯 Detection Results:")
+                if filtered_names:
+                    detected_pokemon = filtered_names[0]
+                    # Calculate simple confidence based on text clarity
+                    confidence = 0.8 if len(pokemon_names) > 0 else 0.6
+                    
+                    print(f"   Pokemon found: {detected_pokemon}")
+                    print(f"   Is Horde: {is_horde}")
+                    print(f"   Contains Shiny: {contains_shiny}")
+                    print(f"   Confidence: {confidence:.3f}")
+                    
+                    return detected_pokemon, confidence, contains_shiny, is_horde
+                else:
+                    print("   ❌ No valid Pokemon detected")
+                    return None, 0.0, False, False
+            else:
+                print("❌ No text detected in region")
+                return None, 0.0, False, False
+                
+        except Exception as e:
+            print(f"❌ Error in simple OCR detection: {e}")
+            return None, 0.0, False, False
+
+    def detect_pokemon_simple_ocr(self, screenshot: np.ndarray) -> Tuple[Optional[str], float, bool]:
+        """
+        Simple OCR-based detection (backward compatibility wrapper)
+        Returns: (pokemon_name, confidence, is_shiny)
+        """
+        pokemon_name, confidence, is_shiny, is_horde = self.detect_pokemon_simple_ocr_enhanced(screenshot)
+        return pokemon_name, confidence, is_shiny
+
+    def set_debug_pokecenter_escape(self, enabled: bool):
+        """Enable/disable debug mode for pokecenter escape detection"""
+        self.debug_pokecenter_escape = enabled
+        print(f"🔧 Debug pokecenter escape: {'Enabled' if enabled else 'Disabled'}")
+        
+        if enabled:
+            print("💡 Debug mode will provide detailed pokecenter escape detection")
+            print("   This helps if you get stuck in Pokecenter animations or transitions")
+        
+    def detect_pokecenter_stuck_debug(self, screenshot: np.ndarray) -> bool:
+        """
+        Enhanced pokecenter detection with debug output
+        Returns True if stuck in pokecenter (ready for improvement)
+        """
+        if not hasattr(self, 'debug_pokecenter_escape') or not self.debug_pokecenter_escape:
+            return False
+            
+        try:
+            print("🔧 DEBUG: Checking for pokecenter stuck condition...")
+            
+            # This is a placeholder implementation ready for future enhancement
+            # Current logic: Basic color/pattern detection
+            
+            # Convert to grayscale for analysis
+            gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
+            
+            # Check for pokecenter-like patterns (can be improved)
+            # Look for consistent colors that might indicate pokecenter screens
+            mean_brightness = np.mean(gray)
+            brightness_variance = np.var(gray)
+            
+            print(f"🔧 DEBUG: Screen analysis:")
+            print(f"   Mean brightness: {mean_brightness:.1f}")
+            print(f"   Brightness variance: {brightness_variance:.1f}")
+            
+            # Simple heuristic (to be improved based on user feedback)
+            is_stuck = False
+            
+            # Check for very uniform/static screens
+            if brightness_variance < 100:  # Very low variance = static screen
+                print("🔧 DEBUG: Low variance detected - possible static screen")
+                is_stuck = True
+            
+            # Check for very bright screens (pokecenter is often bright)
+            if mean_brightness > 200:
+                print("🔧 DEBUG: Very bright screen detected - possible pokecenter")
+                is_stuck = True
+                
+            if is_stuck:
+                print("⚠️ DEBUG: Pokecenter stuck condition detected!")
+                print("🎮 DEBUG: This would trigger escape sequence")
+                return True
+            else:
+                print("✅ DEBUG: No pokecenter stuck condition detected")
+                return False
+                
+        except Exception as e:
+            print(f"❌ DEBUG: Error in pokecenter detection: {e}")
             return False
 
 

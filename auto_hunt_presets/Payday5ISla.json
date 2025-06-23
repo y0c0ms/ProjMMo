@@ -1,7 +1,7 @@
 {
   "max_encounters": 32,
-  "movement_interval": 0.2,
-  "key_hold_duration": 0.4,
+  "movement_interval": 0.3,
+  "key_hold_duration": 0.3,
   "initial_e_presses": 4,
   "battle_key_interval": 0.2,
   "post_e_delay": 8.5,
@@ -9,5 +9,7 @@
   "encounter_loop_type": "e+e",
   "encounter_loop_interval": 0.3,
   "heal_delay": 3.0,
+  "heal_key": "7",
+  "ocr_frequency": 0.4,
   "selected_macro": "5IslPAYDAY"
 }
