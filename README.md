@@ -1,181 +1,132 @@
 # PokeMMO Overlay - Macro System
 
-A Python-based overlay application for PokeMMO that allows you to record and replay keyboard/mouse macros.
+Windows overlay for PokeMMO that records keyboard and mouse macros and replays them relative to the game window, with Auto Hunt and Sweet Scent helpers.
 
 ## Features
 
-- **🎥 Record & Replay**: Capture exact mouse movements, clicks, and keyboard inputs
-- **📁 Macro Organization**: Save macros in categories (Movement, Battles, Inventory, etc.)
-- **🎯 Game Detection**: Automatically detects PokeMMO window
-- **📐 Relative Positioning**: Coordinates adapt to window position/size changes
-- **⏱️ Precise Timing**: Maintains exact timing between recorded actions
-- **🔄 Loop Support**: Repeat macros multiple times
-- **🚫 Emergency Stop**: ESC key stops any running macro
-- **💾 Import/Export**: Share macros with others
+- **Record and replay** keyboard and mouse input, with recorded timing between events
+- **Game window detection**: finds the window whose title contains `PokeMMO` and shows its status in the overlay
+- **Relative coordinates**: macro positions are stored relative to the game window, so they follow it when it moves or resizes
+- **Macro categories**: General, Movement, Battles, Inventory, Trading, Custom
+- **Loop playback** with a stop hotkey (F12)
+- **Emergency stop**: ESC or P halts a running macro
+- **Macro management**: Play, Edit, Duplicate, Export, and Delete from the right-click menu
+- **Auto Hunt tab**: battle-menu detection using template images, with optional OCR (Tesseract)
+- **Sweet Scent tab**: encounter loop driven by JSON presets
+- **Fishing tab**: placeholder only, not implemented
 
-## Installation
+## Requirements
 
-### 1. Install Python Requirements
+- Windows 10/11 (the code uses the Win32 API through `pywin32`)
+- Python 3
+- PokeMMO
+- Tesseract OCR, only if you want OCR-based detection in Auto Hunt. It is searched for in the default Windows install paths.
+
+## Run it
 
 ```bash
 pip install -r requirements.txt
-```
-
-### 2. Install Required Packages
-
-If you don't have pip, install these manually:
-- `pynput` - For input capture and simulation
-- `pywin32` - For Windows API access
-
-### 3. Run the Application
-
-```bash
 python main.py
 ```
 
-## How to Use
+`requirements.txt` installs `pywin32`, `opencv-python`, `pillow`, `numpy`, and `pytesseract`.
 
-### Recording a Macro
+## Usage
 
-1. **Start PokeMMO** first
-2. **Click "● Record"** in the overlay
-3. **Perform actions** in PokeMMO (move, click, type, etc.)
-4. **Click "● Record"** again to stop
-5. **Click "Save"** and give your macro a name
-6. **Choose category** and add description (optional)
+### Record a macro
 
-### Playing a Macro
+1. Start PokeMMO.
+2. Press `` ` `` (or click **Record** in the overlay) to start recording.
+3. Perform the actions in PokeMMO.
+4. Press `` ` `` again to stop, then click **Save**, enter a name, and choose a category.
 
-1. **Select a macro** from the list
-2. **Double-click** or press **"▶ Play"**
-3. **Make sure PokeMMO is active** (the overlay will check)
-4. **Press ESC** to emergency stop if needed
+### Play a macro
 
-### Organizing Macros
+1. Select a macro in the list and double-click it, or click **Play**.
+2. Keep the PokeMMO window focused while the macro runs.
+3. Press ESC or P to stop.
 
-- **Categories**: Movement, Battles, Inventory, Trading, Custom
-- **Edit**: Right-click → Edit to change name/category/description
-- **Duplicate**: Right-click → Duplicate to copy a macro
-- **Export**: Right-click → Export to save macro file
+### Hotkeys
 
-## File Structure
+| Key | Action |
+|---|---|
+| `` ` `` | Toggle recording (`TOGGLE_RECORDING_KEY` in `config.py`) |
+| F12 | Stop loop playback (`STOP_LOOP_KEY`) |
+| ESC or P | Emergency stop |
 
-```
-pokemmo_overlay/
-├── main.py              # Entry point
-├── overlay.py           # Main UI window
-├── input_manager.py     # Input capture/playback
-├── window_manager.py    # Game window detection
-├── macro_manager.py     # Save/load macros
-├── config.py           # Settings
-├── requirements.txt    # Dependencies
-├── macros/             # Saved macro files
-│   ├── movement/
-│   ├── battles/
-│   ├── inventory/
-│   ├── trading/
-│   └── custom/
-└── README.md
-```
-
-## Macro Examples
-
-### Movement Patterns
-- **Route Grinding**: Record walking patterns for EV training
-- **Repel Farming**: Automate repel usage while grinding
-- **Daycare Routes**: Optimize egg hatching routes
-
-### Battle Sequences
-- **Move Combinations**: Record specific battle strategies
-- **Item Usage**: Automate healing and item management
-- **Pokemon Switching**: Complex battle rotations
-
-### Menu Navigation
-- **PC Organization**: Automate box management
-- **Shop Purchases**: Bulk buying items
-- **Trade Setups**: Prepare trades efficiently
-
-## Technical Details
-
-### Mouse Tracking
-- **Pixel-perfect accuracy** with sub-pixel precision
-- **Movement paths** recorded with natural curves
-- **Click timing** maintains human-like patterns
-- **Scroll wheel** support for menu navigation
-
-### Coordinate System
-- **Relative positioning** to PokeMMO window
-- **Automatic adjustment** when window moves/resizes
-- **Multi-monitor support** with correct coordinate translation
-
-### Safety Features
-- **Game detection** - only works when PokeMMO is active
-- **Emergency stop** - ESC key immediately halts playback
-- **Input validation** - prevents invalid macro execution
-- **Window focus** - ensures inputs go to correct window
-
-## Troubleshooting
-
-### "Game: Not Found"
-- Make sure PokeMMO is running
-- Check that window title contains "PokeMMO"
-- Try restarting the overlay
-
-### Macro Not Playing
-- Ensure PokeMMO window is active/focused
-- Check that macro file exists and isn't corrupted
-- Verify no other macro is currently running
-
-### Recording Issues
-- Run as Administrator if input capture fails
-- Check antivirus isn't blocking pynput
-- Ensure no other macro software is interfering
-
-### Dependencies Missing
-```bash
-pip install pynput pywin32
-```
+Macros are stored as JSON under `macros/<category>/`. Examples are included in `macros/`.
 
 ## Configuration
 
-Edit `config.py` to customize:
-- Overlay window size and position
-- Recording precision and thresholds
-- Playback speed and safety delays
-- UI colors and appearance
+Edit `config.py` to change:
 
-## Advanced Usage
+- Overlay size, opacity, and always-on-top
+- Game window title (`GAME_WINDOW_TITLE`, default `PokeMMO`)
+- Recording limits and thresholds (`MAX_RECORDING_TIME`, `MOUSE_MOVE_THRESHOLD`, `RECORDING_PRECISION`)
+- Playback speed and delay between actions
+- OCR screenshot interval
+- Hotkeys and macro categories
 
-### Macro Editing
-- Macros are stored as JSON files
-- Edit timing, coordinates, or actions manually
-- Add conditional logic (advanced users)
+### Auto Hunt battle-menu templates
 
-### Sharing Macros
-- Export macros to share with friends
-- Import macros from others
-- Backup your macro collection
+Auto Hunt detects the battle menu by template matching. To set it up:
 
-## System Requirements
+1. Take a screenshot of the battle menu during an encounter.
+2. Save it as a PNG in `templates/`. `templates/README.txt` has the details.
+3. Click **Load Templates** in the Auto Hunt tab.
 
-- **Windows 10/11** (Win32 API required)
-- **Python 3.7+**
-- **PokeMMO** (any version)
-- **4GB RAM** minimum
-- **Mouse/Keyboard** for recording
+Auto Hunt presets live in `auto_hunt_presets/`, and Sweet Scent presets live in `sweet_scent_presets/`.
+
+## Advanced usage
+
+- Macros are plain JSON files. You can edit timing, coordinates, or actions by hand.
+- Export a macro from the right-click menu to share it. `macro_manager.py` also has an `import_macro` function, but the overlay has no import button.
+- Keep a backup of your `macros/` folder.
+
+## Troubleshooting
+
+**"Game: Not Found"**
+- Make sure PokeMMO is running.
+- Check that the window title contains `PokeMMO`.
+- Restart the overlay.
+
+**Macro does not play**
+- Make sure the PokeMMO window is active and focused.
+- Check that the macro file exists and is valid JSON.
+- Make sure no other macro is running.
+
+**Recording or input does not work**
+- Try running as Administrator.
+- Check that antivirus is not blocking input simulation.
+- Make sure no other macro or input tool is interfering.
+
+**OCR does not work in Auto Hunt**
+- Install Tesseract OCR to a default location, or set the path in `auto_hunt.py`.
+
+## Project structure
+
+```
+main.py              # Entry point and main UI
+overlay.py           # Overlay window and macro list
+macro_manager.py     # Macro load, save, duplicate, export, import
+input_manager.py     # Input recording and playback
+window_manager.py    # PokeMMO window detection
+auto_hunt.py         # Auto Hunt engine (template and OCR detection)
+auto_hunt_pp.py      # Auto Hunt variant with PP management
+sweet_scent.py       # Sweet Scent engine
+config.py            # Settings
+macros/              # Macro JSON files by category
+templates/           # Battle-menu template images
+sprites/             # Sprite images
+auto_hunt_presets/   # Auto Hunt presets
+sweet_scent_presets/ # Sweet Scent presets
+debug_screenshots/   # Screenshots written by Auto Hunt
+```
+
+## Important: game terms and account risk
+
+This tool automates game input. Automating PokeMMO may go against the game's terms of service, and the game operator may take action against accounts that use it. The project makes no guarantee that using it is safe for your account. Use it at your own risk, and follow the game's rules and community guidelines.
 
 ## License
 
 This project is for educational purposes only. Use responsibly and in accordance with game terms of service.
-
-## Support
-
-If you encounter issues:
-1. Check this README
-2. Verify all dependencies are installed
-3. Run as Administrator if needed
-4. Check Windows permissions for input simulation
-
----
-
-**Remember**: This tool automates game actions. Always use responsibly and respect the game's community and rules. 
